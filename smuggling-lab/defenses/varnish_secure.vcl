@@ -1,49 +1,43 @@
-vcl 4.1;
+vcl 4.0;
 
 backend default {
-    .host = "smuggling-backend";
+    .host = "backend";
     .port = "5000";
 }
 
 sub vcl_recv {
-    if (req.method == "PRI") {
-        return (synth(405));
+    if (req.method != "GET" && req.method != "HEAD") {
+        return(pass);
     }
-
-    # Never cache POST
-    if (req.method == "POST") {
-        return (pass);
+    if (req.http.Authorization || req.http.Cookie) {
+        return(pass);
     }
-}
-
-sub vcl_backend_response {
-    # Never cache responses that set cookies
-    if (beresp.http.Set-Cookie) {
-        set beresp.ttl = 0s;
-        return (pass);
-    }
+    return(hash);
 }
 
 sub vcl_hash {
-    # Include host and full URL
-    hash_data(req.http.host);
     hash_data(req.url);
-
-    # Include Cookie and Authorization in cache key
+    hash_data(req.http.Host);
     if (req.http.Cookie) {
         hash_data(req.http.Cookie);
     }
-    if (req.http.Authorization) {
-        hash_data(req.http.Authorization);
+    return(lookup);
+}
+
+sub vcl_backend_response {
+    if (beresp.http.Set-Cookie) {
+        set beresp.uncacheable = true;
+        return(deliver);
+    }
+    if (bereq.url ~ "^/api/") {
+        set beresp.ttl = 300s;
     }
 }
 
 sub vcl_deliver {
-    # Make it explicit that cache varies by Cookie
-    if (resp.http.Vary) {
-        set resp.http.Vary = resp.http.Vary ", Cookie";
+    if (obj.hits > 0) {
+        set resp.http.X-Cache = "HIT";
     } else {
-        set resp.http.Vary = "Cookie";
+        set resp.http.X-Cache = "MISS";
     }
 }
-
