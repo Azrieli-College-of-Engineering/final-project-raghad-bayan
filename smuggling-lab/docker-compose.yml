@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  backend:
+    image: python:3.11-slim
+    container_name: smuggling-backend
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+    command: ["python", "-u", "app.py"]
+    expose:
+      - "5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; \
+import json; \
+req = urllib.request.Request('http://localhost:5000/api/health'); \
+resp = urllib.request.urlopen(req, timeout=2); \
+data = json.loads(resp.read().decode()); \
+sys.exit(0 if data.get('status') == 'ok' else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - lab-network
+
+  cache:
+    image: varnish:7
+    container_name: smuggling-cache
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      - VARNISH_SIZE=256M
+    command: ["varnishd", "-F", "-f", "/etc/varnish/default.vcl", "-a", ":6081", "-s", "malloc,256m"]
+    ports:
+      - "6081:6081"
+    volumes:
+      - ./cache/varnish.vcl:/etc/varnish/default.vcl:ro
+    expose:
+      - "6081"
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'ping' > /dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - lab-network
+
+  frontend:
+    image: haproxy:2.4
+    container_name: smuggling-frontend
+    depends_on:
+      cache:
+        condition: service_started
+    ports:
+      - "80:80"
+    volumes:
+      - ./frontend/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'ping' > /dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - lab-network
+
+networks:
+  lab-network:
+    driver: bridge
+
