@@ -6,6 +6,12 @@ backend default {
 }
 
 sub vcl_recv {
+    if (req.method == "PURGE") {
+        if (req.http.X-Purge-Key == "internal-purge-secret") {
+            return(purge);
+        }
+        return(synth(403, "Forbidden"));
+    }
     if (req.http.Content-Length && req.http.Transfer-Encoding) {
         return(synth(400, "Bad Request - Ambiguous framing"));
     }

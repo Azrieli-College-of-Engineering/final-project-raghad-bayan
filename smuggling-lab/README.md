@@ -62,7 +62,8 @@ smuggling-lab/
 ├── attacker/
 │   ├── smuggle_clte.py          # Scenario 1: CL.TE request smuggling
 │   ├── cache_poison.py          # Scenario 2: cache poisoning via smuggling
-│   └── verify_poison.py         # Verify cache state and optional bust
+│   ├── verify_poison.py         # Verify cache state and optional bust
+│   └── purge_cache.py           # Purge /api/user cache after applying defenses
 ├── defenses/
 │   ├── haproxy_secure.cfg       # hardened HAProxy
 │   ├── varnish_secure.vcl       # hardened Varnish
@@ -304,6 +305,19 @@ What changes:
 Re-run `smuggle_clte.py`:
 
 - Backend will refuse the smuggling POST, breaking the CL.TE discrepancy.
+
+#### Cache Purge After Defense
+
+After applying defenses, **previously poisoned cache entries** in Varnish can still persist until TTL expires. New smuggling attempts are blocked with 400, but any cache entry that was poisoned before the fix will continue serving admin data to all users until it is purged or expires.
+
+Operators should purge the affected cache object(s) after enabling defenses:
+
+```bash
+cd smuggling-lab/attacker
+python purge_cache.py
+```
+
+The script sends a `PURGE /api/user` request with the header `X-Purge-Key: internal-purge-secret` (allowed by the secure VCL from localhost/internal use). It prints the cached response before purge, the purge result, and the response after purge so you can confirm the poisoned entry is removed and subsequent requests return clean `role: standard` data.
 
 ---
 
