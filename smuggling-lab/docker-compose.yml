@@ -2,12 +2,9 @@ version: "3.9"
 
 services:
   backend:
-    image: python:3.11-slim
+    build: ./backend
+    image: smuggling-backend:latest
     container_name: smuggling-backend
-    working_dir: /app
-    volumes:
-      - ./backend:/app
-    command: ["python", "-u", "app.py"]
     expose:
       - "5000"
     healthcheck:
