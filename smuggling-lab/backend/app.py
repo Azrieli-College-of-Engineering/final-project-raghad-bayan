@@ -6,7 +6,7 @@ app = Flask(__name__)
 
 
 def log_request_headers():
-    sys.stdout.write("=== Incoming request ===\n")
+    sys.stdout.write("=== Incoming request (secure app) ===\n")
     sys.stdout.write(f"{request.method} {request.path}?{request.query_string.decode()}\n")
     for k, v in request.headers.items():
         sys.stdout.write(f"{k}: {v}\n")
@@ -15,15 +15,27 @@ def log_request_headers():
 
 
 @app.before_request
-def before():
-    # Log every request and its headers for demo visibility
+def before_secure():
     log_request_headers()
+    has_cl = "Content-Length" in request.headers
+    has_te = "Transfer-Encoding" in request.headers
+    if has_cl and has_te:
+        return Response(
+            "Bad Request: both Content-Length and Transfer-Encoding set\n",
+            status=400,
+        )
+
+
+@app.after_request
+def add_security_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    return resp
 
 
 @app.route("/api/user")
-def api_user():
+def api_user_secure():
     user_id = request.args.get("id", "guest")
-    # Intentionally allow header to influence content so it can be poisoned
     is_admin_view = request.headers.get("X-Admin-Auth") == "secret-token"
     if is_admin_view:
         payload = {
@@ -45,7 +57,7 @@ def api_user():
 
 
 @app.route("/admin", methods=["GET", "POST"])
-def admin():
+def admin_secure():
     token = request.headers.get("X-Admin-Auth")
     if token != "secret-token":
         return Response("Forbidden\n", status=403, headers={"Cache-Control": "no-store"})
@@ -55,15 +67,14 @@ def admin():
 
 
 @app.route("/api/health")
-def api_health():
-    resp = jsonify({"status": "ok", "server": "backend"})
+def api_health_secure():
+    resp = jsonify({"status": "ok", "server": "backend-secure"})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
 @app.route("/", methods=["POST"])
-def root_post():
-    # Echo back the headers and body to show what the backend believes it received
+def root_post_secure():
     raw_body = request.get_data(cache=False, as_text=True)
     headers_dict = {k: v for k, v in request.headers.items()}
     payload = {
@@ -76,7 +87,7 @@ def root_post():
 
 
 @app.route("/api/public")
-def api_public():
+def api_public_secure():
     payload = {"message": "this is public content", "version": "1.0"}
     resp = jsonify(payload)
     resp.headers["Cache-Control"] = "public, max-age=600"
@@ -84,6 +95,5 @@ def api_public():
 
 
 if __name__ == "__main__":
-    # Bind to all interfaces so Docker can route traffic
     app.run(host="0.0.0.0", port=5000, debug=False)
 
