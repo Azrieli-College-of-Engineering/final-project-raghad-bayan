@@ -1,6 +1,6 @@
 import json
 import sys
-from flask import Flask, request, Response, jsonify
+from flask import Flask, request, Response, jsonify, make_response
 
 app = Flask(__name__)
 
@@ -15,15 +15,36 @@ def log_request_headers():
 
 
 @app.before_request
-def before_secure():
-    log_request_headers()
+def block_ambiguous_framing():
+    """
+    Defense against HTTP Request Smuggling.
+    Reject any request that contains Transfer-Encoding: chunked
+    since legitimate requests through our proxy chain should never
+    have this header reach the backend directly from clients.
+    The proxy (HAProxy/Varnish) should handle chunked encoding.
+    If TE: chunked reaches the backend, it indicates a smuggling attempt.
+    """
+    te = request.headers.get("Transfer-Encoding", "")
+    if "chunked" in te.lower():
+        app.logger.warning(f"BLOCKED: Smuggling attempt detected - Transfer-Encoding: {te}")
+        return make_response(
+            "400 Bad Request - Transfer-Encoding not permitted on this endpoint",
+            400,
+        )
+
+
+@app.before_request
+def block_ambiguous_framing_cl_te():
+    """Defense-in-depth: reject requests with both Content-Length and Transfer-Encoding."""
     has_cl = "Content-Length" in request.headers
     has_te = "Transfer-Encoding" in request.headers
     if has_cl and has_te:
-        return Response(
-            "Bad Request: both Content-Length and Transfer-Encoding set\n",
-            status=400,
-        )
+        return make_response("400 Bad Request - Ambiguous framing rejected", 400)
+
+
+@app.before_request
+def before_secure():
+    log_request_headers()
 
 
 @app.after_request

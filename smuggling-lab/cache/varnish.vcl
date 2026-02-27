@@ -6,6 +6,9 @@ backend default {
 }
 
 sub vcl_recv {
+    if (req.http.Content-Length && req.http.Transfer-Encoding) {
+        return(synth(400, "Bad Request - Ambiguous framing"));
+    }
     if (req.method != "GET" && req.method != "HEAD") {
         return(pass);
     }
