@@ -58,6 +58,23 @@ def add_security_headers(resp):
     return resp
 
 
+# ── Scenario 5 Defense: Cache Deception ──────────────────────────────────────
+# SECURE: reject any request to /api/user/<suffix> with 404.
+# The cache stores a 404 instead of private data — nothing useful to steal.
+# ─────────────────────────────────────────────────────────────────────────────
+@app.route("/api/user/<path:suffix>")
+def api_user_deception_secure(suffix):
+    app.logger.warning(f"BLOCKED: Cache deception attempt - path suffix: {suffix}")
+    resp = jsonify({"error": "Not found", "path": suffix})
+    # no-store ensures Varnish never caches this 404
+    resp.status_code = 404
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ── Scenario 1 Defense: User Profile API ─────────────────────────────────────
+# SECURE endpoint for /api/user without suffix
+# ─────────────────────────────────────────────────────────────────────────────
 @app.route("/api/user")
 def api_user_secure():
     user_id = request.args.get("id", "guest")
@@ -98,20 +115,6 @@ def api_reset_secure():
         "host_used": APP_DOMAIN,
     }
     resp = jsonify(payload)
-    resp.headers["Cache-Control"] = "no-store"
-    return resp
-
-
-# ── Scenario 5 Defense: Cache Deception ──────────────────────────────────────
-# SECURE: reject any request to /api/user/<suffix> with 404.
-# The cache stores a 404 instead of private data — nothing useful to steal.
-# ─────────────────────────────────────────────────────────────────────────────
-@app.route("/api/user/<path:suffix>")
-def api_user_deception_secure(suffix):
-    app.logger.warning(f"BLOCKED: Cache deception attempt - path suffix: {suffix}")
-    resp = jsonify({"error": "Not found", "path": suffix})
-    # no-store ensures Varnish never caches this 404
-    resp.status_code = 404
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
