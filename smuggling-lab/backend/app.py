@@ -1,12 +1,18 @@
 import json
+import os
 import sys
 from flask import Flask, request, Response, jsonify, make_response
 
 app = Flask(__name__)
 
+# Read mode from environment variable (default: secure)
+MODE = os.environ.get("MODE", "secure").lower()
+IS_VULNERABLE = MODE == "vulnerable"
+
 
 def log_request_headers():
-    sys.stdout.write("=== Incoming request (secure app) ===\n")
+    mode_label = "vulnerable app" if IS_VULNERABLE else "secure app"
+    sys.stdout.write(f"=== Incoming request ({mode_label}) ===\n")
     sys.stdout.write(f"{request.method} {request.path}?{request.query_string.decode()}\n")
     for k, v in request.headers.items():
         sys.stdout.write(f"{k}: {v}\n")
@@ -15,36 +21,31 @@ def log_request_headers():
 
 
 @app.before_request
-def block_ambiguous_framing():
-    """
-    Defense against HTTP Request Smuggling.
-    Reject any request that contains Transfer-Encoding: chunked
-    since legitimate requests through our proxy chain should never
-    have this header reach the backend directly from clients.
-    The proxy (HAProxy/Varnish) should handle chunked encoding.
-    If TE: chunked reaches the backend, it indicates a smuggling attempt.
-    """
+def before_log():
+    log_request_headers()
+
+
+@app.before_request
+def maybe_block_smuggling():
+    """Only block smuggling attempts in SECURE mode."""
+    if IS_VULNERABLE:
+        # Vulnerable mode: do NOT block - allow CL+TE requests through
+        return None
+
+    # Secure mode: block Transfer-Encoding: chunked
     te = request.headers.get("Transfer-Encoding", "")
     if "chunked" in te.lower():
-        app.logger.warning(f"BLOCKED: Smuggling attempt detected - Transfer-Encoding: {te}")
+        app.logger.warning(f"BLOCKED: Smuggling attempt - Transfer-Encoding: {te}")
         return make_response(
             "400 Bad Request - Transfer-Encoding not permitted on this endpoint",
             400,
         )
 
-
-@app.before_request
-def block_ambiguous_framing_cl_te():
-    """Defense-in-depth: reject requests with both Content-Length and Transfer-Encoding."""
+    # Secure mode: block requests with both CL and TE
     has_cl = "Content-Length" in request.headers
     has_te = "Transfer-Encoding" in request.headers
     if has_cl and has_te:
         return make_response("400 Bad Request - Ambiguous framing rejected", 400)
-
-
-@app.before_request
-def before_secure():
-    log_request_headers()
 
 
 @app.after_request
@@ -55,7 +56,7 @@ def add_security_headers(resp):
 
 
 @app.route("/api/user")
-def api_user_secure():
+def api_user():
     user_id = request.args.get("id", "guest")
     is_admin_view = request.headers.get("X-Admin-Auth") == "secret-token"
     if is_admin_view:
@@ -71,31 +72,30 @@ def api_user_secure():
             "role": "standard",
             "data": "your profile",
         }
-
     resp = jsonify(payload)
     resp.headers["Cache-Control"] = "public, max-age=300"
     return resp
 
 
 @app.route("/admin", methods=["GET", "POST"])
-def admin_secure():
+def admin():
     token = request.headers.get("X-Admin-Auth")
     if token != "secret-token":
         return Response("Forbidden\n", status=403, headers={"Cache-Control": "no-store"})
-
     body = "ADMIN PANEL - user list: alice, bob, charlie, secret-key: XK9#mP2$\n"
     return Response(body, status=200, headers={"Cache-Control": "no-store"})
 
 
 @app.route("/api/health")
-def api_health_secure():
-    resp = jsonify({"status": "ok", "server": "backend-secure"})
+def api_health():
+    mode_label = "vulnerable" if IS_VULNERABLE else "secure"
+    resp = jsonify({"status": "ok", "server": f"backend-{mode_label}"})
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
 @app.route("/", methods=["POST"])
-def root_post_secure():
+def root_post():
     raw_body = request.get_data(cache=False, as_text=True)
     headers_dict = {k: v for k, v in request.headers.items()}
     payload = {
@@ -108,7 +108,7 @@ def root_post_secure():
 
 
 @app.route("/api/public")
-def api_public_secure():
+def api_public():
     payload = {"message": "this is public content", "version": "1.0"}
     resp = jsonify(payload)
     resp.headers["Cache-Control"] = "public, max-age=600"
@@ -117,4 +117,3 @@ def api_public_secure():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
-
