@@ -66,6 +66,9 @@ sys.exit(0 if data.get('status') == 'ok' else 1)"]
     container_name: smuggling-dashboard
     depends_on:
       - frontend
+    environment:
+      - TARGET_HOST=frontend
+      - TARGET_PORT=80
     ports:
       - "8080:8080"
     volumes:

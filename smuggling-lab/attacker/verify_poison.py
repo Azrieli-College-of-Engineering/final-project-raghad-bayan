@@ -1,8 +1,9 @@
 import argparse
+import os
 import socket
 
-TARGET_HOST = "localhost"
-TARGET_PORT = 80
+TARGET_HOST = os.environ.get("TARGET_HOST", "localhost")
+TARGET_PORT = int(os.environ.get("TARGET_PORT", "80"))
 
 
 def send(raw):
