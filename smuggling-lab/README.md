@@ -1,419 +1,260 @@
-## HTTP Request Smuggling + Cache Poisoning Lab
+# HTTP Request Smuggling + Cache Poisoning Lab
 
-### Overview
-
-This lab is an intentionally vulnerable three-tier web stack that demonstrates **HTTP/1.1 request smuggling** and **cache poisoning** using a classic **CL.TE desynchronization**:
-
-- **CL (Content-Length) vs TE (Transfer-Encoding: chunked)** disagreement between layers
-- A front-end proxy uses **Content-Length** to frame requests
-- A back-end server uses **Transfer-Encoding: chunked** to frame requests
-- The disagreement lets an attacker **smuggle a hidden HTTP request** that rides on a shared backend connection and can then **poison the cache** for all users
-
-You get:
-
-- A vulnerable stack using **HAProxy → Varnish → Flask**
-- Raw-socket Python attack scripts
-- Hardened configurations showing how to defend against the attack
+This project is an intentionally vulnerable three-tier web stack that demonstrates **HTTP/1.1 request smuggling** (CL.TE desynchronization) and **web cache poisoning**. It shows how a front-end proxy and back-end server can disagree on request boundaries, allowing an attacker to smuggle a hidden request and poison a shared cache so that all users receive malicious content. This repository is a **web security final project** for academic and research use.
 
 ---
 
-### Architecture Diagram (ASCII)
+## About This Project
 
-```text
-            Attacker / Victim Browser
-                       |
-                       v
-                [ HAProxy 2.4 ]
-                frontend (port 80)
-                - HTTP/1.1 keep-alive
-                - Forwards CL+TE intact
-                       |
-                       v
-                [  Varnish 7  ]
-                cache (port 6081)
-                - Caches /api/* GET
-                - Insecure hash (ignores Cookie/Auth, collapses /api/user)
-                       |
-                       v
-             [ Flask Backend API ]
-                 (port 5000)
-              - Processes TE: chunked
-              - /admin protected by header
-              - /api/user and /api/public cacheable
-```
+### The CL.TE Desync Vulnerability
 
-External access is only to **HAProxy on port 80**; all other communication is on the internal Docker network.
+In HTTP/1.1, request body boundaries can be specified by **Content-Length** (byte count) or **Transfer-Encoding: chunked** (chunked encoding). When a request contains *both* headers, different components may interpret it differently:
+
+- A **front-end** (e.g. HAProxy) might honor **Content-Length** and treat the entire byte stream as one request body.
+- A **back-end** (e.g. Flask/Werkzeug) might honor **Transfer-Encoding: chunked** and stop reading at the chunk terminator `0\r\n\r\n`.
+
+The bytes *after* that terminator are then left in the TCP buffer. On the next request over the same connection, the back-end sees those bytes as the *next* request. An attacker can thus **smuggle** a second request (e.g. `GET /admin`) that is processed when an innocent user’s request is sent later.
+
+### Chaining with Cache Poisoning
+
+If the smuggled request targets a **cacheable** URL (e.g. `/api/user`) and is sent with privileged headers (e.g. `X-Admin-Auth: secret-token`), the back-end returns admin-only data. The cache (Varnish) stores that response under a key that normal clients also use (e.g. path-only `/api/user`). Every subsequent user requesting `/api/user` then receives the **poisoned** admin response until the cache entry expires or is purged.
+
+### Related Resources
+
+This lab aligns with the following PortSwigger Web Security Academy topics:
+
+- [Exploiting HTTP request smuggling to bypass front-end security controls, CL.TE vulnerability](https://portswigger.net/web-security/request-smuggling/exploiting#bypassing-front-end-security-controls-cl-te-vulnerabilities)
+- [Exploiting HTTP request smuggling to perform web cache poisoning](https://portswigger.net/web-security/request-smuggling/exploiting#web-cache-poisoning)
+
+An **academic report PDF** describing the vulnerability, attack chain, and defenses is included in the repository.
 
 ---
 
-### Project Structure
+## Architecture
 
-```text
-smuggling-lab/
-├── docker-compose.yml
-├── frontend/
-│   └── haproxy.cfg              # vulnerable HAProxy
-├── cache/
-│   └── varnish.vcl              # vulnerable Varnish config
-├── backend/
-│   ├── Dockerfile               # Flask backend built on python:3.11-slim
-│   ├── requirements.txt         # flask==3.0.0
-│   └── app.py                   # vulnerable Flask app
-├── attacker/
-│   ├── smuggle_clte.py          # Scenario 1: CL.TE request smuggling
-│   ├── cache_poison.py          # Scenario 2: cache poisoning via smuggling
-│   ├── verify_poison.py         # Verify cache state and optional bust
-│   └── purge_cache.py           # Purge /api/user cache after applying defenses
-├── defenses/
-│   ├── haproxy_secure.cfg       # hardened HAProxy
-│   ├── varnish_secure.vcl       # hardened Varnish
-│   └── app_secure.py            # hardened Flask app
-└── README.md
 ```
+[Attacker]  →  [HAProxy :80]  →  [Varnish :6081]  →  [Flask :5000]
+```
+
+| Layer     | Technology   | Role                                      | Vulnerability / behavior                          |
+|----------|--------------|-------------------------------------------|---------------------------------------------------|
+| Front-end| HAProxy 2.4  | Reverse proxy, keep-alive, forwards CL+TE | Forwards requests with both CL and TE; reuses backend connections |
+| Cache    | Varnish 7   | HTTP cache for `/api/*`                   | Hash ignores Cookie/Auth; path-only key for `/api/user` |
+| Back-end | Flask        | API server, `/api/user`, `/admin`         | Honors TE: chunked; stops at `0\r\n\r\n`; queues leftover bytes |
+
+External access is only to **HAProxy on port 80**; Varnish and Flask communicate on the internal Docker network.
 
 ---
 
-### Setup Instructions
+## Attack Scenarios
 
-From the repo root:
+### Scenario 1 — CL.TE Request Smuggling
 
-```bash
-git clone <your-repo-url> smuggling-lab-repo
-cd smuggling-lab-repo/smuggling-lab
+**What it does:** Sends a single POST with both `Content-Length` and `Transfer-Encoding: chunked`. The body is crafted so the back-end ends the request at the chunk terminator while the front-end treats the whole thing as one body. The bytes after the terminator form a smuggled `GET /admin` that is executed when the next request is sent on a new connection (the “victim” request).
 
-# Build and start the vulnerable stack
-docker-compose up --build
-```
-
-Services:
-
-- **frontend**: HAProxy 2.4 on `localhost:80`
-- **cache**: Varnish 7 on internal port `6081`
-- **backend**: Flask app on internal port `5000`
-
-Health dependencies:
-
-- Backend starts first and exposes `/api/health`
-- Varnish depends on backend
-- HAProxy depends on Varnish
-
----
-
-### Running the Attacks
-
-All attacker scripts use **raw Python sockets** to send byte-precise HTTP/1.1 requests (`\r\n` line endings).
-
-Make sure the stack is running:
-
-```bash
-cd smuggling-lab
-docker-compose up --build
-```
-
-Open another terminal for attacks:
-
-```bash
-cd smuggling-lab/attacker
-python smuggle_clte.py
-python cache_poison.py
-python verify_poison.py
-```
-
-#### Scenario 1 – CL.TE Request Smuggling (`smuggle_clte.py`)
-
-```bash
-cd smuggling-lab/attacker
-python smuggle_clte.py
-```
-
-What it does:
-
-1. **Builds a single POST** to `/` with both:
-   - `Content-Length: <N>` (covers chunked body + smuggled GET)
-   - `Transfer-Encoding: chunked`
-2. **Chunked body** sent to backend:
-   - `1\r\nX\r\n0\r\n\r\n`  → backend thinks body ends here
-3. **Smuggled request** is appended after the terminating chunk:
-   - `GET /admin HTTP/1.1\r\nHost: localhost\r\nX-Admin-Auth: secret-token\r\n\r\n`
-4. HAProxy uses **Content-Length** and forwards everything as one POST body.
-5. Backend uses **Transfer-Encoding** and stops at `0\r\n\r\n`, leaving `GET /admin` sitting in the TCP buffer.
-6. Script then waits ~500ms and sends a new **GET /api/user?id=victim** on a fresh client connection.
-
-Expected console output:
-
-- Clearly labeled:
-  - Response to smuggling POST
-  - Response to victim GET
-- The **second response** should contain:
-  - `ADMIN PANEL - user list: alice, bob, charlie, secret-key: XK9#mP2$`
-
-What to look for:
-
-- In the backend container logs, you should see:
-  - First: `POST /` with TE: chunked
-  - Then: a `GET /admin` even though you never sent it directly from the victim
-
-#### Scenario 2 – Cache Poisoning via Smuggling (`cache_poison.py`)
-
-```bash
-cd smuggling-lab/attacker
-python cache_poison.py
-```
-
-The script runs **four steps**, all printed with labels and raw responses:
-
-1. **STEP 1 – Verify clean cache**
-   - Sends `GET /api/user?id=guest`
-   - Backend returns JSON:
-     - `{"user": "guest", "role": "standard", "data": "your profile"}`
-   - Response has `Cache-Control: public, max-age=300`
-   - The script prints:
-     - Headers
-     - Body preview
-     - `CACHE HIT` / `CACHE MISS` based on `Age` / `X-Varnish`
-
-2. **STEP 2 – Smuggling POST**
-   - Sends a CL.TE **POST /** with:
-     - Chunked body `1\r\nX\r\n0\r\n\r\n`
-     - Followed by smuggled:
-       - `GET /api/user?id=guest` with `X-Admin-Auth: secret-token`
-   - Backend processes the chunked POST (ignoring smuggled bytes) and queues the privileged `GET /api/user`.
-
-3. **STEP 3 – Trigger request**
-   - Sends benign `GET /api/user` (no query string) on a new connection.
-   - On the backend side:
-     - The queued smuggled request `GET /api/user?id=guest` with header `X-Admin-Auth: secret-token` is processed.
-     - `app.py` sees `X-Admin-Auth: secret-token` and returns **admin-flavoured JSON**:
-       - `role: "admin"`, plus `secret_key: "XK9#mP2$"`.
-   - Varnish caches this response under the **collapsed key `/api/user`** (query string ignored in `vcl_hash`).
-
-4. **STEP 4 – Verify poisoning**
-   - Sends 3 more `GET /api/user` requests on separate connections.
-   - All are served from cache and contain the **admin data**.
-   - The script prints `CACHE HIT` / `CACHE MISS` for each based on:
-     - `Age:` header
-     - `X-Varnish:` header
-
-What to look for:
-
-- STEP 1 body: `"role": "standard"`
-- STEP 3 and STEP 4 bodies: `"role": "admin"` and `"secret_key": "XK9#mP2$"`
-- Increasing `Age` header values on later responses, confirming they are **served from Varnish cache**.
-
-#### Scenario 2 – Verifying Cache State (`verify_poison.py`)
-
-```bash
-cd smuggling-lab/attacker
-python verify_poison.py
-```
-
-Behavior:
-
-1. Sends **5 sequential `GET /api/user` requests** to HAProxy.
-2. For each response, prints:
-   - Body preview
-   - `Age` and `X-Varnish` response headers (if present)
-   - A heuristic verdict: `POISONED` if body looks admin-like (e.g. contains `admin` or `secret_key`), otherwise `CLEAN`.
-
-Optional cache-busting:
-
-```bash
-python verify_poison.py --bust
-```
-
-- First sends `GET /api/user?id=bust123` to change what backend might cache.
-- Then performs the 5 standard `GET /api/user` runs again.
-
----
-
-### Applying the Defenses
-
-The `defenses/` directory contains hardened configs that neutralize the smuggling and cache-poisoning vectors.
-
-#### 1. Harden HAProxy
-
-- Vulnerable config: `frontend/haproxy.cfg`
-- Secure config: `defenses/haproxy_secure.cfg`
-
-Replace the mounted file in `docker-compose.yml` (or copy over the config):
-
-```bash
-cd smuggling-lab
-cp defenses/haproxy_secure.cfg frontend/haproxy.cfg
-docker-compose restart frontend
-```
-
-What changes:
-
-- Rejects any request with **both `Content-Length` and `Transfer-Encoding`**:
-  - Uses an ACL and `http-request deny` to return `400` with a clear message.
-- Uses `http-server-close`:
-  - Disables backend connection reuse, making it much harder to smuggle extra bytes across requests.
-
-Re-run `smuggle_clte.py` / `cache_poison.py`:
-
-- The smuggling POST should now be **rejected with 400**.
-- No hidden `GET /admin` or privileged `GET /api/user` should show in backend logs.
-
-#### 2. Harden Varnish
-
-- Vulnerable config: `cache/varnish.vcl`
-- Secure config: `defenses/varnish_secure.vcl`
-
-Swap the VCL:
-
-```bash
-cd smuggling-lab
-cp defenses/varnish_secure.vcl cache/varnish.vcl
-docker-compose restart cache
-```
-
-What changes:
-
-- Includes `Cookie` and `Authorization` in the **hash key**:
-  - Prevents cache key confusion between authenticated and unauthenticated views.
-- Never caches responses with `Set-Cookie`.
-- Never caches POST responses.
-- Adds `Vary: Cookie` on delivery:
-  - Makes it explicit that the cache key varies with cookies.
-
-Re-run `cache_poison.py`:
-
-- Even if smuggling were still possible, Varnish will **not serve admin data to other users** under the same cache key.
-
-#### 3. Harden the Flask App
-
-- Vulnerable app: `backend/app.py`
-- Secure app: `defenses/app_secure.py`
-
-To use the secure app in Docker:
-
-```bash
-cd smuggling-lab
-cp defenses/app_secure.py backend/app.py
-docker-compose up --build
-```
-
-What changes:
-
-- `before_request` hook that **rejects any request with both `Content-Length` and `Transfer-Encoding`** with `400 Bad Request`.
-- Adds security headers to all responses:
-  - `X-Content-Type-Options: nosniff`
-  - `X-Frame-Options: DENY`
-- Keeps the same endpoints and behavior but enforces stricter input validation.
-
-Re-run `smuggle_clte.py`:
-
-- Backend will refuse the smuggling POST, breaking the CL.TE discrepancy.
-
-#### Cache Purge After Defense
-
-After applying defenses, **previously poisoned cache entries** in Varnish can still persist until TTL expires. New smuggling attempts are blocked with 400, but any cache entry that was poisoned before the fix will continue serving admin data to all users until it is purged or expires.
-
-Operators should purge the affected cache object(s) after enabling defenses:
-
-```bash
-cd smuggling-lab/attacker
-python purge_cache.py
-```
-
-The script sends a `PURGE /api/user` request with the header `X-Purge-Key: internal-purge-secret` (allowed by the secure VCL from localhost/internal use). It prints the cached response before purge, the purge result, and the response after purge so you can confirm the poisoned entry is removed and subsequent requests return clean `role: standard` data.
-
----
-
-### How the Vulnerability Works
-
-#### CL.TE Desync Mechanics (Byte-Level)
-
-Consider the smuggling request built by `smuggle_clte.py`:
+**Payload (conceptually):**
 
 ```http
 POST / HTTP/1.1
 Host: localhost
 Connection: keep-alive
-Content-Length: <N>
+Content-Length: <length of entire body>
 Transfer-Encoding: chunked
 
-1\r\n
-X\r\n
-0\r\n
-\r\n
+1\r\nX\r\n0\r\n\r\n
 GET /admin HTTP/1.1\r\n
 Host: localhost\r\n
 X-Admin-Auth: secret-token\r\n
 \r\n
 ```
 
-Two different parsers see this differently:
+**Expected output:**
 
-- **Front-end (HAProxy)**
-  - Uses `Content-Length: N` to decide how many bytes belong to this POST.
-  - Treats everything after the header block (including `GET /admin ...`) as part of the body.
-  - When N bytes arrive, HAProxy believes the POST is complete.
-
-- **Back-end (Flask / Werkzeug)**
-  - Sees `Transfer-Encoding: chunked` and **ignores `Content-Length`**.
-  - Parses chunks:
-    - `1\r\nX\r\n` → reads 1 byte of data: `X`
-    - `0\r\n\r\n` → chunk terminator; POST body ends here.
-  - **Stops reading** the request body at this point.
-  - The remaining bytes starting at `GET /admin ...` are left unread in the backend connection buffer.
-
-When the next client request arrives:
-
-- HAProxy / Varnish reuses the backend TCP connection (keep-alive).
-- The first thing waiting in that connection buffer is:
-  - `GET /admin HTTP/1.1\r\nHost: ...`
-- This **smuggled request** is processed **before or instead of** the victim’s intended request.
-
-#### Why Varnish Caches the Poisoned Response
-
-1. The smuggled request is:
-   - `GET /api/user?id=guest` with `X-Admin-Auth: secret-token`.
-2. `backend/app.py` checks `X-Admin-Auth`:
-   - If `secret-token`, it responds with **admin-flavoured** JSON (`role: "admin"`, `secret_key` included), but still cacheable:
-   - `Cache-Control: public, max-age=300`.
-3. Varnish’s vulnerable `vcl_hash`:
-   - For `/api/user`, it **ignores query parameters** and uses a single key:
-     - `/api/user`
-   - It explicitly **does not hash in Cookie or Authorization**.
-4. Thus, the admin response for `/api/user?id=guest` is cached as if it were just `/api/user` with no auth context.
-5. Later, any user requesting `/api/user` (no query, no auth) gets served:
-   - The **admin response** from cache.
-
-#### Why All Subsequent Users Are Affected
-
-- The poisoned object remains in cache **until TTL expires** (300 seconds) or it is evicted/busted.
-- Every subsequent request to `/api/user` (or any variant collapsed to the same key) returns:
-  - Admin data that **should have been restricted** to privileged contexts.
-- No cookies or auth headers are considered for the cache key, so:
-  - Anonymous users, different sessions, etc. all share the same poisoned cache entry.
+- **Vulnerable:** Victim’s GET receives the admin panel response (smuggled request was executed).
+- **With defenses:** Smuggling POST returns **HTTP 400 Bad Request**; victim’s GET receives normal `/api/user` data; no smuggled request reaches the back-end.
 
 ---
 
-### Prevention
+### Scenario 2 — Cache Poisoning
 
-| Mitigation                              | Where to Apply        | What It Prevents                                           |
-|----------------------------------------|------------------------|------------------------------------------------------------|
-| Reject CL+TE combination               | Edge / App server     | Eliminates CL.TE desync by enforcing unambiguous framing   |
-| Disable backend connection reuse       | Front-end proxy       | Stops smuggled bytes from affecting subsequent requests    |
-| Normalize / strip conflicting headers  | Front-end proxy       | Ensures only one framing mechanism is used end-to-end      |
-| Include Cookie & Authorization in hash | Cache layer (Varnish) | Prevents cache key confusion across user/auth contexts     |
-| Don’t cache POST or Set-Cookie         | Cache layer           | Avoids caching sensitive or stateful responses             |
-| Use strong validation in app           | Application layer     | Rejects malformed / suspicious requests early              |
-| Add security headers                   | Application layer     | Mitigates some browser-based exploitation vectors          |
-| Regularly review proxy/cache configs   | Operations            | Catches unsafe defaults and regressions over time          |
+**What it does:** Uses the same CL.TE desync to queue a privileged `GET /api/user` with `X-Admin-Auth: secret-token`. A follow-up “trigger” GET causes that queued request to run; the back-end returns admin JSON, and Varnish caches it under `/api/user`. All later users get **role: admin** and **secret_key** from cache.
 
-Use the **vulnerable** configuration for teaching and demos, then switch to the **secure** configuration to show how each mitigation breaks the attack chain.
+**Steps:**
+
+| Step | Action | Purpose |
+|------|--------|--------|
+| **STEP 1** | GET `/api/user?id=guest` | Confirm clean cache; response has `role: standard`. |
+| **STEP 2** | POST with CL+TE; body = chunked + smuggled `GET /api/user` + `X-Admin-Auth` | Queue privileged GET on backend connection. |
+| **STEP 3** | GET `/api/user` on new connection | Trigger queued request; backend returns admin JSON; Varnish caches it. |
+| **STEP 4** | Multiple GET `/api/user` | All served from cache with **role: ADMIN**, `secret_key: XK9#mP2$**. |
+
+**Expected output (vulnerable):** STEP 1 = CACHE MISS, role: standard. STEP 3 and STEP 4 = CACHE HIT, role: admin, secret_key present. With defenses applied and cache purged, STEP 2 returns 400 and no poisoning occurs.
 
 ---
 
-### Known Timing Sensitivities and Tips
+## Project Structure
 
-- The attacker scripts intentionally sleep for **0.1–0.5 seconds** between smuggling and trigger requests:
-  - This helps ensure the smuggled bytes are fully processed and the backend connection is re-used.
-- If you do not see the expected behavior:
-  - Increase sleep to 1–2 seconds.
-  - Confirm all containers are healthy (`docker ps` and logs).
-  - Inspect backend logs to verify hidden `/admin` and `/api/user` requests appear as expected.
+```text
+smuggling-lab/
+├── docker-compose.yml
+├── frontend/
+│   └── haproxy.cfg
+├── cache/
+│   └── varnish.vcl
+├── backend/
+│   ├── Dockerfile
+│   ├── app.py
+│   └── requirements.txt
+├── attacker/
+│   ├── smuggle_clte.py
+│   ├── cache_poison.py
+│   ├── purge_cache.py
+│   └── verify_poison.py
+├── defenses/
+│   ├── haproxy_secure.cfg
+│   ├── varnish_secure.vcl
+│   └── app_secure.py
+└── README.md
+```
 
+| File / directory       | Purpose |
+|------------------------|--------|
+| `docker-compose.yml`   | Orchestrates HAProxy, Varnish, and Flask; defines internal network and health checks. |
+| `frontend/haproxy.cfg` | Active HAProxy config (vulnerable or replaced by secure copy). |
+| `cache/varnish.vcl`   | Active Varnish VCL (vulnerable or replaced by secure copy). |
+| `backend/Dockerfile`   | Builds Flask app image (Python 3.11, Flask). |
+| `backend/app.py`       | Flask app: `/api/user`, `/admin`, `/`; vulnerable to CL.TE and cache poisoning. |
+| `backend/requirements.txt` | Flask dependency. |
+| `attacker/smuggle_clte.py` | Scenario 1: sends CL.TE smuggling POST and victim GET. |
+| `attacker/cache_poison.py` | Scenario 2: four-step cache poisoning (verify, smuggle, trigger, verify). |
+| `attacker/purge_cache.py`  | Sends PURGE for `/api/user` with secret key; shows before/after cache state. |
+| `attacker/verify_poison.py` | Sends multiple GET `/api/user`; reports POISONED vs CLEAN; optional `--bust`. |
+| `defenses/haproxy_secure.cfg` | Hardened HAProxy: ACL for CL+TE, `http-server-close`. |
+| `defenses/varnish_secure.vcl` | Hardened Varnish: PURGE with key, strict hash, no cache for Set-Cookie. |
+| `defenses/app_secure.py`     | Hardened Flask: blocks TE: chunked and CL+TE; security headers. |
+
+---
+
+## Installation & Quick Start
+
+```bash
+git clone https://github.com/Azrieli-College-of-Engineering/final-project-raghad-bayan
+cd final-project-raghad-bayan/smuggling-lab
+docker compose up --build
+```
+
+In a second terminal:
+
+```bash
+cd final-project-raghad-bayan/smuggling-lab/attacker
+python smuggle_clte.py
+python cache_poison.py
+```
+
+---
+
+## Running the Attacks
+
+All attacker scripts use **raw Python sockets** and send byte-accurate HTTP/1.1 with `\r\n` line endings.
+
+### smuggle_clte.py
+
+1. Builds a POST to `/` with both `Content-Length` and `Transfer-Encoding: chunked`, body = chunked data + smuggled `GET /admin` with `X-Admin-Auth: secret-token`.
+2. Sends the POST (connection may stay open).
+3. Waits ~500 ms, then sends a new GET `/api/user?id=victim` on a fresh connection.
+
+**Expected (vulnerable):** Response to the victim GET contains admin panel content. **Expected (defended):** POST gets 400; victim GET gets normal JSON.
+
+### cache_poison.py
+
+1. **STEP 1:** GET `/api/user?id=guest` — see CACHE MISS, `role: standard`.
+2. **STEP 2:** Send CL.TE smuggling POST with smuggled `GET /api/user` + `X-Admin-Auth`.
+3. **STEP 3:** GET `/api/user` — triggers queued request; backend returns admin JSON; Varnish caches it.
+4. **STEP 4:** Several more GET `/api/user` — all CACHE HIT with admin data.
+
+**Expected (vulnerable):** STEP 3 and STEP 4 show `role: admin`, `secret_key`, CACHE HIT. **Expected (defended):** STEP 2 returns 400; no poisoning.
+
+### verify_poison.py
+
+Sends five GET `/api/user` and prints body preview plus a POISONED/CLEAN verdict. Use `python verify_poison.py --bust` to send a cache-busting GET first.
+
+### purge_cache.py
+
+Sends GET → PURGE (with `X-Purge-Key: internal-purge-secret`) → GET for `/api/user`. Prints before/after cache state and CACHE HIT/MISS. Use after applying defenses to remove a poisoned entry.
+
+---
+
+## Applying Defenses
+
+Copy the secure configs into the active locations and rebuild:
+
+```bash
+copy .\defenses\app_secure.py .\backend\app.py
+copy .\defenses\varnish_secure.vcl .\cache\varnish.vcl
+copy .\defenses\haproxy_secure.cfg .\frontend\haproxy.cfg
+docker compose down && docker compose up --build
+```
+
+Then purge the cache and confirm the attack is blocked:
+
+```bash
+cd attacker
+python purge_cache.py
+python cache_poison.py
+```
+
+After purge: BEFORE may show CACHE HIT (POISONED), then PURGE 200, then AFTER shows CACHE MISS (CLEAN). Running `cache_poison.py` after that: STEP 1 CACHE MISS, STEP 2 HTTP 400, STEP 3 and STEP 4 CACHE MISS with `role: standard`.
+
+---
+
+## Defense Mechanisms
+
+| Defense | What it prevents | Where implemented |
+|--------|-------------------|-------------------|
+| Flask blocks TE: chunked | Smuggling requests from reaching application logic; primary mitigation when proxy does not see both headers | `app_secure.py`: `block_ambiguous_framing()` before_request |
+| HAProxy ACL (CL+TE) | Intended to reject requests with both Content-Length and Transfer-Encoding | `haproxy_secure.cfg`: `acl has_cl`, `acl has_te`, `http-request deny` |
+| Varnish strict cache key | Prevents cached admin response from being served for unauthenticated key | `varnish_secure.vcl`: hash includes Cookie, Host, URL; pass for Auth/Cookie |
+| Varnish PURGE + X-Purge-Key | Allows operators to purge poisoned object after enabling other defenses | `varnish_secure.vcl`: `vcl_recv` PURGE + secret key |
+| HAProxy 2.4 ACL limitation | In practice, HAProxy 2.4 strips Content-Length before ACL evaluation when Transfer-Encoding is present, so the CL+TE ACL does not fire; defense-in-depth only | Documented in `defenses/haproxy_secure.cfg` comment; real enforcement is in Flask |
+
+---
+
+## Key Findings
+
+1. **HAProxy 2.4** silently strips or normalizes `Content-Length` when `Transfer-Encoding` is present, before ACL evaluation. Therefore, an ACL that checks for *both* headers does not see both and cannot reliably block CL.TE at the proxy in this setup.
+
+2. **Cache poisoning persists after defenses are applied.** Once a poisoned response is stored, it is served until TTL expires or the entry is purged. Blocking new smuggling alone is not enough.
+
+3. **Remediation requires both:** (a) block new smuggling (e.g. at Flask by rejecting TE: chunked or ambiguous framing), and (b) **purge** the affected cache entries (e.g. `purge_cache.py`) so existing poison is removed.
+
+---
+
+## Technologies
+
+| Tool | Version | Purpose |
+|-----|---------|--------|
+| HAProxy | 2.4 | Front-end reverse proxy, HTTP/1.1 |
+| Varnish | 7 | HTTP cache, VCL 4.0 |
+| Flask | 3.0.x | Back-end API |
+| Python | 3.11 | Attack scripts and backend |
+| Docker / Docker Compose | — | Orchestration |
+
+---
+
+## Limitations
+
+- The lab uses a fixed, simplified topology (single front-end, cache, and backend) and does not model every real-world deployment.
+- Attack scripts use raw sockets and assume the stack is reachable at `localhost:80`; no authentication or TLS.
+- The “secure” configs are for demonstration; production would need stricter purge authorization, TLS, and additional hardening.
+- HAProxy ACL behavior is specific to the version tested; other proxies may behave differently.
+- Cache purge is protected only by a shared secret header; production should use stronger access control and network restrictions.
+
+---
+
+## Sources
+
+- [PortSwigger – HTTP request smuggling](https://portswigger.net/web-security/request-smuggling)
+- [PortSwigger – Exploiting HTTP request smuggling (bypass front-end controls, cache poisoning)](https://portswigger.net/web-security/request-smuggling/exploiting)
+- [RFC 7230 – Hypertext Transfer Protocol (HTTP/1.1): Message Syntax and Routing](https://datatracker.ietf.org/doc/html/rfc7230)
+- [OWASP – HTTP Request Smuggling](https://owasp.org/www-community/attacks/HTTP_Request_Smuggling)
+- James Kettle – [HTTP Desync Attacks: Request Smuggling Reborn](https://portswigger.net/research/http-desync-attacks-request-smuggling-reborn) (Black Hat USA 2019)
