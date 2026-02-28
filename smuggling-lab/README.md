@@ -1,6 +1,6 @@
 # HTTP Request Smuggling + Cache Poisoning Lab
 
-This project is an intentionally vulnerable three-tier web stack that demonstrates **HTTP/1.1 request smuggling** (CL.TE desynchronization) and **web cache poisoning**. It shows how a front-end proxy and back-end server can disagree on request boundaries, allowing an attacker to smuggle a hidden request and poison a shared cache so that all users receive malicious content. This repository is a **web security final project** for academic and research use.
+This project is an intentionally vulnerable three-tier web stack that demonstrates **HTTP/1.1 request smuggling** (CL.TE desynchronization) and **web cache poisoning**. It shows how a front-end proxy and back-end server can disagree on request boundaries, allowing an attacker to smuggle a hidden request and poison a shared cache so that all users receive malicious content. A **web Control Panel** (dashboard) lets you switch between vulnerable and defended configurations and run the attack scenarios with one click. This repository is a **web security final project** for academic and research use.
 
 ---
 
@@ -42,7 +42,21 @@ An academic final project report (Word/PDF) was prepared for submission. If it i
 | Cache    | Varnish 7   | HTTP cache for `/api/*`                   | Hash ignores Cookie/Auth; path-only key for `/api/user` |
 | Back-end | Flask        | API server, `/api/user`, `/admin`         | Honors TE: chunked; stops at `0\r\n\r\n`; queues leftover bytes |
 
-External access is only to **HAProxy on port 80**; Varnish and Flask communicate on the internal Docker network.
+External access is via **HAProxy on port 80** (lab traffic) and the **Dashboard on port 8080** (control panel). Varnish and Flask run on the internal Docker network.
+
+---
+
+## Control Panel (Dashboard)
+
+A web-based **Control Panel** runs at **http://localhost:8080**. Use it to:
+
+![HTTP Request Smuggling Lab — Control Panel](screenshots/dashboard.png)
+
+- **Switch mode:** "Switch to VULNERABLE" or "Switch to DEFENDED" — copies the corresponding configs (backend, Varnish, HAProxy) and restarts the affected containers. Wait ~5 seconds after switching for services to come back up.
+- **Run attacks:** One-click buttons for **Scenario 1: CL.TE Smuggling** and **Scenario 2: Cache Poisoning**.
+- **Recovery:** "Run Purge Cache" and "Run Verify Poison" to clear or check cache state.
+
+The dashboard shows the current mode (VULNERABLE / DEFENDED), runs the attacker scripts inside Docker (targeting the frontend service), and displays script output in a terminal-style panel.
 
 ---
 
@@ -117,26 +131,28 @@ X-Admin-Auth: secret-token\r\n
 smuggling-lab/
 ├── docker-compose.yml
 ├── frontend/
-│   └── haproxy.cfg
+│   ├── haproxy.cfg              # active (vulnerable or overwritten by secure)
+│   └── haproxy_vulnerable.cfg   # backup minimal config for vulnerable mode
 ├── cache/
-│   └── varnish.vcl
+│   ├── varnish.vcl              # active (vulnerable or overwritten by secure)
+│   └── varnish_vulnerable.vcl   # backup VCL for vulnerable mode
 ├── backend/
 │   ├── Dockerfile
-│   ├── app.py
-│   ├── flow-diagram.html
+│   ├── app.py                   # active (vulnerable or overwritten by secure)
+│   ├── app_vulnerable.py        # backup app without smuggling defenses
+│   └── requirements.txt
+├── dashboard/
+│   ├── app.py                   # FastAPI control panel (HTML + API)
+│   ├── Dockerfile
 │   └── requirements.txt
 ├── attacker/
-│   ├── smuggle_clte.py
-│   ├── smuggle_tecl.py
-│   ├── cache_poison.py
-│   ├── cache_deception.py
+│   ├── smuggle_clte.py          # Scenario 1: CL.TE smuggling
+│   ├── cache_poison.py          # Scenario 2: cache poisoning
 │   ├── purge_cache.py
-│   ├── demo.py
-│   ├── host_header_injection.py
-│   └── verify_poison.py
+│   ├── verify_poison.py
+│   └── ...
 ├── defenses/
 │   ├── haproxy_secure.cfg
-│   ├── haproxy_tecl_secure.cfg
 │   ├── varnish_secure.vcl
 │   └── app_secure.py
 └── README.md
@@ -144,18 +160,20 @@ smuggling-lab/
 
 | File / directory       | Purpose |
 |------------------------|--------|
-| `docker-compose.yml`   | Orchestrates HAProxy, Varnish, and Flask; defines internal network and health checks. |
-| `frontend/haproxy.cfg` | Active HAProxy config (vulnerable or replaced by secure copy). |
-| `cache/varnish.vcl`   | Active Varnish VCL (vulnerable or replaced by secure copy). |
-| `backend/Dockerfile`   | Builds Flask app image (Python 3.11, Flask). |
-| `backend/app.py`       | Flask app: `/api/user`, `/admin`, `/`; vulnerable to CL.TE and cache poisoning. |
-| `backend/requirements.txt` | Flask dependency. |
-| `attacker/smuggle_clte.py` | Scenario 1: sends CL.TE smuggling POST and victim GET. |
-| `attacker/cache_poison.py` | Scenario 2: four-step cache poisoning (verify, smuggle, trigger, verify). |
-| `attacker/purge_cache.py`  | Sends PURGE for `/api/user` with secret key; shows before/after cache state. |
-| `attacker/verify_poison.py` | Sends multiple GET `/api/user`; reports POISONED vs CLEAN; optional `--bust`. |
+| `docker-compose.yml`   | Orchestrates backend, cache, frontend, and dashboard; internal network, health checks, backend volume mount. |
+| `frontend/haproxy.cfg` | Active HAProxy config (overwritten by dashboard when switching mode). |
+| `frontend/haproxy_vulnerable.cfg` | Minimal HAProxy config used when "Switch to VULNERABLE" is clicked. |
+| `cache/varnish.vcl`     | Active Varnish VCL (overwritten by dashboard when switching mode). |
+| `cache/varnish_vulnerable.vcl` | VCL used when "Switch to VULNERABLE"; includes PURGE handling. |
+| `backend/app.py`       | Active Flask app (overwritten by dashboard when switching mode). |
+| `backend/app_vulnerable.py` | Flask app without `block_ambiguous_framing`; used in vulnerable mode. |
+| `dashboard/app.py`     | FastAPI app: serves control panel at `/`, API for run/mode/status; copies configs and restarts containers. |
+| `attacker/smuggle_clte.py` | Scenario 1: CL.TE smuggling POST + victim GET. |
+| `attacker/cache_poison.py` | Scenario 2: four-step cache poisoning. |
+| `attacker/purge_cache.py`  | PURGE `/api/user` with X-Purge-Key; before/after cache state. |
+| `attacker/verify_poison.py` | Multiple GET `/api/user`; POISONED vs CLEAN; optional `--bust`. |
 | `defenses/haproxy_secure.cfg` | Hardened HAProxy: ACL for CL+TE, `http-server-close`. |
-| `defenses/varnish_secure.vcl` | Hardened Varnish: PURGE with key, strict hash, no cache for Set-Cookie. |
+| `defenses/varnish_secure.vcl` | Hardened Varnish: PURGE with key, strict hash, CL+TE check. |
 | `defenses/app_secure.py`     | Hardened Flask: blocks TE: chunked and CL+TE; security headers. |
 
 ---
@@ -168,7 +186,9 @@ cd final-project-raghad-bayan/smuggling-lab
 docker compose up --build
 ```
 
-In a second terminal:
+Then open **http://localhost:8080** in your browser for the **Control Panel**. Use the dashboard to switch between VULNERABLE and DEFENDED modes and to run the attack scenarios (CL.TE, Cache Poisoning), purge cache, and verify poison.
+
+Optionally, run the attacker scripts from the command line (e.g. from a second terminal, with the lab already running):
 
 ```bash
 cd final-project-raghad-bayan/smuggling-lab/attacker
@@ -176,13 +196,15 @@ python smuggle_clte.py
 python cache_poison.py
 ```
 
+Scripts use `TARGET_HOST` and `TARGET_PORT` from the environment; when run from the dashboard they target `frontend:80` inside Docker; when run locally they default to `localhost:80`.
+
 ---
 
 ## Running the Attacks
 
 All attacker scripts use **raw Python sockets** and send byte-accurate HTTP/1.1 with `\r\n` line endings.
 
-### smuggle_clte.py
+### smuggle_clte.py (Scenario 1)
 
 1. Builds a POST to `/` with both `Content-Length` and `Transfer-Encoding: chunked`, body = chunked data + smuggled `GET /admin` with `X-Admin-Auth: secret-token`.
 2. Sends the POST (connection may stay open).
@@ -190,7 +212,7 @@ All attacker scripts use **raw Python sockets** and send byte-accurate HTTP/1.1 
 
 **Expected (vulnerable):** Response to the victim GET contains admin panel content. **Expected (defended):** POST gets 400; victim GET gets normal JSON.
 
-### cache_poison.py
+### cache_poison.py (Scenario 2)
 
 1. **STEP 1:** GET `/api/user?id=guest` — see CACHE MISS, `role: standard`.
 2. **STEP 2:** Send CL.TE smuggling POST with smuggled `GET /api/user` + `X-Admin-Auth`.
@@ -210,6 +232,15 @@ Sends GET → PURGE (with `X-Purge-Key: internal-purge-secret`) → GET for `/ap
 ---
 
 ## Applying Defenses
+
+### Via the dashboard (recommended)
+
+1. Open http://localhost:8080.
+2. Click **"Switch to DEFENDED"**. Wait ~5 seconds for the backend, cache, and frontend to restart.
+3. Click **"Run Purge Cache"** to remove any previously poisoned cache entry.
+4. Run **Scenario 1** or **Scenario 2** again — the smuggling POST should return **400** and the victim should get normal data.
+
+### Manually (copy + rebuild)
 
 Copy the secure configs into the active locations and rebuild:
 
@@ -237,13 +268,12 @@ After purge: BEFORE may show CACHE HIT (POISONED), then PURGE 200, then AFTER sh
 For strict grading, include screenshots or pasted outputs showing:
 
 - **Vulnerable run**
-  - `python smuggle_clte.py` showing victim receives admin content
-  - `python cache_poison.py` showing STEP 3/4 `role: admin` and CACHE HIT
+  - Dashboard: Switch to VULNERABLE, then run Scenario 1 (CL.TE) — victim receives admin content; run Scenario 2 (Cache Poisoning) — STEP 3/4 show `role: admin` and CACHE HIT.
+  - Or: `python smuggle_clte.py` / `python cache_poison.py` from the `attacker/` directory.
 - **Defended run**
-  - `python cache_poison.py` showing STEP 2 returns **HTTP 400**
-  - Backend log line: `BLOCKED: Smuggling attempt detected ...`
+  - Dashboard: Switch to DEFENDED, wait ~5 s, run Purge Cache, then run Scenario 1 or 2 — POST returns **HTTP 400**, backend log shows `BLOCKED: Smuggling attempt detected ...`.
 - **Recovery**
-  - `python purge_cache.py` showing BEFORE poisoned, PURGE 200, AFTER clean
+  - Dashboard: "Run Purge Cache" — BEFORE poisoned, PURGE 200, AFTER clean. Or: `python purge_cache.py` from `attacker/`.
 
 These can be placed in the report or added to the repository as images under a `screenshots/` folder.
 
@@ -278,8 +308,9 @@ These can be placed in the report or added to the repository as images under a `
 | HAProxy | 2.4 | Front-end reverse proxy, HTTP/1.1 |
 | Varnish | 7 | HTTP cache, VCL 4.0 |
 | Flask | 3.0.x | Back-end API |
-| Python | 3.11 | Attack scripts and backend |
-| Docker / Docker Compose | — | Orchestration |
+| FastAPI / Uvicorn | — | Dashboard (control panel) |
+| Python | 3.11 | Attack scripts, backend, dashboard |
+| Docker / Docker Compose | — | Orchestration (backend, cache, frontend, dashboard) |
 
 ---
 

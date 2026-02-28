@@ -3,8 +3,10 @@ from __future__ import annotations
 import datetime
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
+import docker as docker_sdk
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -20,6 +22,13 @@ CONFIG_MAPPING_DEFENDED = [
     (DEFENSES_DIR / "haproxy_secure.cfg", FRONTEND_DIR / "haproxy.cfg"),
     (DEFENSES_DIR / "varnish_secure.vcl", CACHE_DIR / "varnish.vcl"),
     (DEFENSES_DIR / "app_secure.py", BACKEND_DIR / "app.py"),
+]
+
+VULNERABLE_DIR = BASE_DIR / "backend" / "vulnerable"
+CONFIG_MAPPING_VULNERABLE = [
+    (BACKEND_DIR / "app_vulnerable.py", BACKEND_DIR / "app.py"),
+    (CACHE_DIR / "varnish_vulnerable.vcl", CACHE_DIR / "varnish.vcl"),
+    (FRONTEND_DIR / "haproxy_vulnerable.cfg", FRONTEND_DIR / "haproxy.cfg"),
 ]
 
 
@@ -481,8 +490,8 @@ HTML_PAGE = """
       }
     }
 
-    btnVuln.addEventListener("click", () => postJSON("/api/mode/vulnerable", btnVuln));
-    btnDef.addEventListener("click", () => postJSON("/api/mode/defended", btnDef));
+    btnVuln.addEventListener("click", async () => { await postJSON("/api/mode/vulnerable", btnVuln); setTimeout(() => fetchStatus(), 5000); });
+    btnDef.addEventListener("click", async () => { await postJSON("/api/mode/defended", btnDef); setTimeout(() => fetchStatus(), 5000); });
     btnSmuggle.addEventListener("click", () => postJSON("/api/run/smuggle", btnSmuggle));
     btnSmuggleTecl.addEventListener("click", () => postJSON("/api/run/smuggle-tecl", btnSmuggleTecl));
     btnPoison.addEventListener("click", () => postJSON("/api/run/poison", btnPoison));
@@ -514,6 +523,20 @@ def run_script(script_path: Path) -> dict:
         return {"output": f"Error while running {script_path}: {exc}", "success": False}
 
 
+def restart_containers(container_names: list[str]) -> None:
+    try:
+        client = docker_sdk.from_env()
+        for name in container_names:
+            try:
+                container = client.containers.get(name)
+                container.restart()
+            except Exception:  # noqa: S110
+                pass
+        client.close()
+    except Exception:  # noqa: S110
+        pass
+
+
 def apply_defended_configs() -> dict:
     errors = []
     for src, dest in CONFIG_MAPPING_DEFENDED:
@@ -527,7 +550,7 @@ def apply_defended_configs() -> dict:
             errors.append(f"Failed to copy {src} -> {dest}: {exc}")
     success = not errors
     return {
-        "output": "\\n".join(errors) if errors else "Defended configuration applied.",
+        "output": "\n".join(errors) if errors else "Configs applied. Restarting containers... please wait 5 seconds",
         "success": success,
     }
 
@@ -570,12 +593,25 @@ async def run_verify() -> JSONResponse:
 @app.post("/api/mode/vulnerable")
 async def set_mode_vulnerable() -> JSONResponse:
     global CURRENT_MODE  # noqa: PLW0603
-    CURRENT_MODE = "vulnerable"
-    # In this lab, vulnerable configs are the default files already mounted.
+    errors = []
+    for src, dest in CONFIG_MAPPING_VULNERABLE:
+        try:
+            if not src.exists():
+                errors.append(f"Source not found: {src}")
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dest)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"Failed to copy {src} -> {dest}: {exc}")
+    success = not errors
+    if success:
+        restart_containers(["smuggling-backend", "smuggling-cache", "smuggling-frontend"])
+        time.sleep(3)
+    CURRENT_MODE = "vulnerable" if success else CURRENT_MODE
     return JSONResponse(
         {
-            "output": "Switched to VULNERABLE mode. Active configs are the default lab files.",
-            "success": True,
+            "output": "\n".join(errors) if errors else "Configs applied. Restarting containers... please wait 5 seconds",
+            "success": success,
             "mode": CURRENT_MODE,
         }
     )
@@ -585,6 +621,9 @@ async def set_mode_vulnerable() -> JSONResponse:
 async def set_mode_defended() -> JSONResponse:
     global CURRENT_MODE  # noqa: PLW0603
     result = apply_defended_configs()
+    if result["success"]:
+        restart_containers(["smuggling-backend", "smuggling-cache", "smuggling-frontend"])
+        time.sleep(3)
     CURRENT_MODE = "defended" if result["success"] else CURRENT_MODE
     result["mode"] = CURRENT_MODE
     return JSONResponse(result)
