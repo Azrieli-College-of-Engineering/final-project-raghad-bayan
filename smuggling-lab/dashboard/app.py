@@ -317,10 +317,13 @@ HTML_PAGE = """
 
       <section class="panel">
         <h2>Attack & Recovery Scenarios</h2>
-        <p>Use these controls to drive the lab. Each action runs a Python script inside the attacker environment and streams its output to the terminal below.</p>
+        <p>Scenario 1: CL.TE Smuggling — frontend uses Content-Length, backend uses Transfer-Encoding. Scenario 2: TE.CL Smuggling — frontend uses Transfer-Encoding, backend uses Content-Length. Scenario 3: Cache Poisoning — chains smuggling with cache poisoning.</p>
         <div class="button-row">
           <button id="btn-smuggle" class="btn-blue">
             Scenario 1: CL.TE Smuggling
+          </button>
+          <button id="btn-smuggle-tecl" class="btn-blue">
+            Scenario 3: TE.CL Smuggling
           </button>
           <button id="btn-poison" class="btn-blue">
             Scenario 2: Cache Poisoning
@@ -361,6 +364,7 @@ HTML_PAGE = """
     const btnVuln = document.getElementById("btn-vulnerable");
     const btnDef = document.getElementById("btn-defended");
     const btnSmuggle = document.getElementById("btn-smuggle");
+    const btnSmuggleTecl = document.getElementById("btn-smuggle-tecl");
     const btnPoison = document.getElementById("btn-poison");
     const btnPurge = document.getElementById("btn-purge");
     const btnVerify = document.getElementById("btn-verify");
@@ -407,7 +411,7 @@ HTML_PAGE = """
     }
 
     function setButtonsDisabled(disabled) {
-      const all = [btnVuln, btnDef, btnSmuggle, btnPoison, btnPurge, btnVerify];
+      const all = [btnVuln, btnDef, btnSmuggle, btnSmuggleTecl, btnPoison, btnPurge, btnVerify];
       all.forEach(b => { if (b) b.disabled = disabled; });
     }
 
@@ -480,6 +484,7 @@ HTML_PAGE = """
     btnVuln.addEventListener("click", () => postJSON("/api/mode/vulnerable", btnVuln));
     btnDef.addEventListener("click", () => postJSON("/api/mode/defended", btnDef));
     btnSmuggle.addEventListener("click", () => postJSON("/api/run/smuggle", btnSmuggle));
+    btnSmuggleTecl.addEventListener("click", () => postJSON("/api/run/smuggle-tecl", btnSmuggleTecl));
     btnPoison.addEventListener("click", () => postJSON("/api/run/poison", btnPoison));
     btnPurge.addEventListener("click", () => postJSON("/api/run/purge", btnPurge));
     btnVerify.addEventListener("click", () => postJSON("/api/run/verify", btnVerify));
@@ -535,6 +540,12 @@ async def get_index() -> HTMLResponse:
 @app.post("/api/run/smuggle")
 async def run_smuggle() -> JSONResponse:
     result = run_script(ATTACKER_DIR / "smuggle_clte.py")
+    return JSONResponse(result)
+
+
+@app.post("/api/run/smuggle-tecl")
+async def run_smuggle_tecl() -> JSONResponse:
+    result = run_script(ATTACKER_DIR / "smuggle_tecl.py")
     return JSONResponse(result)
 
 
