@@ -263,22 +263,6 @@ After purge: BEFORE may show CACHE HIT (POISONED), then PURGE 200, then AFTER sh
 
 ---
 
-## Demo Evidence (Recommended for Submission)
-
-For strict grading, include screenshots or pasted outputs showing:
-
-- **Vulnerable run**
-  - Dashboard: Switch to VULNERABLE, then run Scenario 1 (CL.TE) — victim receives admin content; run Scenario 2 (Cache Poisoning) — STEP 3/4 show `role: admin` and CACHE HIT.
-  - Or: `python smuggle_clte.py` / `python cache_poison.py` from the `attacker/` directory.
-- **Defended run**
-  - Dashboard: Switch to DEFENDED, wait ~5 s, run Purge Cache, then run Scenario 1 or 2 — POST returns **HTTP 400**, backend log shows `BLOCKED: Smuggling attempt detected ...`.
-- **Recovery**
-  - Dashboard: "Run Purge Cache" — BEFORE poisoned, PURGE 200, AFTER clean. Or: `python purge_cache.py` from `attacker/`.
-
-These can be placed in the report or added to the repository as images under a `screenshots/` folder.
-
----
-
 ## Defense Mechanisms
 
 | Defense | What it prevents | Where implemented |
