@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTTP Request Smuggling Lab — Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #00d4ff;
+            --secondary: #ff00ff;
+            --danger: #ff3366;
+            --success: #00ff88;
+            --warning: #ffaa00;
+            --dark: #0a0e27;
+            --darker: #050810;
+            --text: #e0e0e0;
+            --border: #1a1f3a;
+        }
+
+        body {
+            font-family: 'Monaco', 'Courier New', monospace;
+            background: linear-gradient(135deg, var(--dark) 0%, var(--darker) 100%);
+            color: var(--text);
+            line-height: 1.6;
+            background-attachment: fixed;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Header */
+        header {
+            margin-bottom: 40px;
+            text-align: center;
+            border-bottom: 2px solid var(--primary);
+            padding-bottom: 20px;
+            background: rgba(0, 212, 255, 0.05);
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+            text-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+        }
+
+        .subtitle {
+            color: var(--primary);
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+
+        /* Status Bar */
+        .status-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .status-item {
+            background: rgba(20, 30, 60, 0.8);
+            border: 1px solid var(--border);
+            padding: 15px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .status-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2em;
+        }
+
+        .status-icon.healthy {
+            background: rgba(0, 255, 136, 0.2);
+            border: 2px solid var(--success);
+        }
+
+        .status-icon.unhealthy {
+            background: rgba(255, 51, 102, 0.2);
+            border: 2px solid var(--danger);
+        }
+
+        .status-text h3 {
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+
+        .status-text p {
+            font-size: 0.8em;
+            opacity: 0.7;
+        }
+
+        /* Main Grid */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+
+        @media (max-width: 1200px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Panel */
+        .panel {
+            background: rgba(20, 30, 60, 0.6);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 30px;
+            backdrop-filter: blur(10px);
+        }
+
+        .panel h2 {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .panel h2::before {
+            content: '';
+            width: 4px;
+            height: 24px;
+            background: linear-gradient(180deg, var(--primary), var(--secondary));
+            border-radius: 2px;
+        }
+
+        /* Mode Control */
+        .mode-control {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .mode-btn {
+            flex: 1;
+            padding: 15px 20px;
+            border: 2px solid var(--border);
+            background: rgba(20, 30, 60, 0.5);
+            color: var(--text);
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: 'Monaco', monospace;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            font-size: 0.9em;
+        }
+
+        .mode-btn:hover {
+            border-color: var(--primary);
+            background: rgba(0, 212, 255, 0.1);
+        }
+
+        .mode-btn.active {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: #000;
+            border-color: var(--primary);
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+        }
+
+        /* Scenarios */
+        .scenarios-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+        }
+
+        .scenario-btn {
+            padding: 15px;
+            background: rgba(50, 60, 100, 0.6);
+            border: 2px solid var(--border);
+            color: var(--text);
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: 'Monaco', monospace;
+            font-size: 0.85em;
+            transition: all 0.3s ease;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .scenario-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+            transition: left 0.5s;
+        }
+
+        .scenario-btn:hover {
+            border-color: var(--primary);
+            box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .scenario-btn:hover::before {
+            left: 100%;
+        }
+
+        .scenario-btn.running {
+            background: rgba(0, 212, 255, 0.2);
+            border-color: var(--primary);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .scenario-icon {
+            font-size: 1.5em;
+            margin-bottom: 5px;
+            display: block;
+        }
+
+        /* Action Buttons */
+        .action-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .action-btn {
+            padding: 12px 20px;
+            background: rgba(50, 60, 100, 0.6);
+            border: 2px solid var(--border);
+            color: var(--text);
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: 'Monaco', monospace;
+            font-size: 0.85em;
+            transition: all 0.3s ease;
+            font-weight: bold;
+        }
+
+        .action-btn:hover {
+            border-color: var(--warning);
+            background: rgba(255, 170, 0, 0.1);
+        }
+
+        .action-btn.danger:hover {
+            border-color: var(--danger);
+            background: rgba(255, 51, 102, 0.1);
+        }
+
+        .action-btn.success {
+            border-color: var(--success);
+        }
+
+        .action-btn.success:hover {
+            border-color: var(--success);
+            background: rgba(0, 255, 136, 0.1);
+        }
+
+        /* Output Terminal */
+        .terminal {
+            background: #000;
+            border: 2px solid var(--primary);
+            border-radius: 6px;
+            padding: 15px;
+            font-size: 0.8em;
+            line-height: 1.4;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Monaco', monospace;
+            margin-top: 20px;
+        }
+
+        .terminal-line {
+            color: var(--primary);
+            margin: 3px 0;
+            word-break: break-all;
+        }
+
+        .terminal-line.error {
+            color: var(--danger);
+        }
+
+        .terminal-line.success {
+            color: var(--success);
+        }
+
+        .terminal-line.warning {
+            color: var(--warning);
+        }
+
+        /* Flow Diagram */
+        .flow-diagram {
+            margin-top: 30px;
+            padding: 20px;
+            background: rgba(50, 60, 100, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .flow-item {
+            display: inline-block;
+            background: rgba(0, 212, 255, 0.1);
+            border: 2px solid var(--primary);
+            padding: 10px 15px;
+            margin: 5px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            position: relative;
+        }
+
+        .flow-arrow {
+            display: inline-block;
+            color: var(--primary);
+            margin: 0 5px;
+            font-size: 1.2em;
+        }
+
+        /* Loading Animation */
+        .loader {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0, 212, 255, 0.3);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(20, 30, 60, 0.4);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--primary);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--secondary);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 1.8em;
+            }
+
+            .panel {
+                padding: 20px;
+            }
+
+            .scenarios-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚔️ HTTP Request Smuggling Lab</h1>
+            <p class="subtitle">Control Panel — Manage lab mode, run attack scenarios, and observe cache behavior in real time</p>
+        </header>
+
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-icon healthy" id="backend-status">
+                    ✓
+                </div>
+                <div class="status-text">
+                    <h3>Backend</h3>
+                    <p id="backend-health">Checking...</p>
+                </div>
+            </div>
+            <div class="status-item">
+                <div class="status-icon healthy" id="cache-status">
+                    ✓
+                </div>
+                <div class="status-text">
+                    <h3>Cache (Varnish)</h3>
+                    <p id="cache-health">Checking...</p>
+                </div>
+            </div>
+            <div class="status-item">
+                <div class="status-icon healthy" id="frontend-status">
+                    ✓
+                </div>
+                <div class="status-text">
+                    <h3>Frontend (HAProxy)</h3>
+                    <p id="frontend-health">Checking...</p>
+                </div>
+            </div>
+            <div class="status-item">
+                <div class="status-icon healthy" id="mode-status">
+                    ◆
+                </div>
+                <div class="status-text">
+                    <h3>Current Mode</h3>
+                    <p id="current-mode">Loading...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Grid -->
+        <div class="main-grid">
+            <!-- Left: Mode Control & Scenarios -->
+            <div class="panel">
+                <h2>🎛️ Lab Configuration</h2>
+
+                <h3 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.1em;">Mode Control</h3>
+                <div class="mode-control">
+                    <button class="mode-btn" id="vulnerable-btn" onclick="switchMode('vulnerable')">
+                        ⚠️ Vulnerable
+                    </button>
+                    <button class="mode-btn" id="defended-btn" onclick="switchMode('defended')">
+                        🛡️ Defended
+                    </button>
+                </div>
+
+                <h3 style="margin-top: 20px; margin-bottom: 10px; font-size: 1.1em;">Attack & Recovery Scenarios</h3>
+
+                <!-- CL.TE Smuggling -->
+                <div style="margin-bottom: 20px;">
+                    <h4 style="font-size: 0.95em; margin-bottom: 8px; color: var(--primary);">Scenario 1: CL.TE Smuggling</h4>
+                    <p style="font-size: 0.85em; margin-bottom: 10px; opacity: 0.7;">Frontend uses Content-Length, backend uses Transfer-Encoding</p>
+                    <button class="scenario-btn" id="cl-te-btn" onclick="runScenario('cl_te')">
+                        <span class="scenario-icon">🔀</span>
+                        Run CL.TE
+                    </button>
+                </div>
+
+                <!-- TE.CL Smuggling -->
+                <div style="margin-bottom: 20px;">
+                    <h4 style="font-size: 0.95em; margin-bottom: 8px; color: var(--primary);">Scenario 2: TE.CL Smuggling</h4>
+                    <p style="font-size: 0.85em; margin-bottom: 10px; opacity: 0.7;">Frontend uses Transfer-Encoding, backend uses Content-Length</p>
+                    <button class="scenario-btn" id="te-cl-btn" onclick="runScenario('te_cl')">
+                        <span class="scenario-icon">🔀</span>
+                        Run TE.CL
+                    </button>
+                </div>
+
+                <!-- Cache Poisoning -->
+                <div style="margin-bottom: 20px;">
+                    <h4 style="font-size: 0.95em; margin-bottom: 8px; color: var(--primary);">Scenario 3: Cache Poisoning</h4>
+                    <p style="font-size: 0.85em; margin-bottom: 10px; opacity: 0.7;">Chain smuggling with cache poisoning attacks</p>
+                    <button class="scenario-btn" id="cache-poison-btn" onclick="runScenario('cache_poison')">
+                        <span class="scenario-icon">☠️</span>
+                        Run Poison
+                    </button>
+                </div>
+
+                <!-- Cache Actions -->
+                <div class="action-buttons">
+                    <button class="action-btn" onclick="purgeCache()">🗑️ Purge Cache</button>
+                    <button class="action-btn success" onclick="verifyPoison()">✓ Verify Poison</button>
+                </div>
+
+                <!-- Flow Diagram -->
+                <div class="flow-diagram">
+                    <h4 style="margin-bottom: 10px; font-size: 0.9em;">Request Flow</h4>
+                    <div style="font-size: 0.8em;">
+                        <span class="flow-item">Client</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-item">HAProxy</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-item">Varnish</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-item">Flask</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Output Terminal -->
+            <div class="panel">
+                <h2>📊 Real-Time Output</h2>
+                <div class="terminal" id="output-terminal">
+                    <div class="terminal-line" style="color: var(--primary);">$ Lab initialized...</div>
+                    <div class="terminal-line" style="color: var(--primary);">$ Waiting for commands...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logs Panel -->
+        <div class="panel">
+            <h2>📋 Service Logs</h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 20px;">
+                <div>
+                    <h4 style="margin-bottom: 10px; color: var(--primary);">Backend Logs</h4>
+                    <div class="terminal" id="backend-logs" style="max-height: 200px;"></div>
+                </div>
+                <div>
+                    <h4 style="margin-bottom: 10px; color: var(--primary);">Cache Logs</h4>
+                    <div class="terminal" id="cache-logs" style="max-height: 200px;"></div>
+                </div>
+                <div>
+                    <h4 style="margin-bottom: 10px; color: var(--primary);">Frontend Logs</h4>
+                    <div class="terminal" id="frontend-logs" style="max-height: 200px;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = "http://localhost:8080/api";
+
+        // Update status every 5 seconds
+        async function updateStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/status`);
+                const data = await res.json();
+
+                updateStatusIcon("backend", data.backend_healthy);
+                updateStatusIcon("cache", data.cache_healthy);
+                updateStatusIcon("frontend", data.frontend_healthy);
+                updateModeButtons(data.mode);
+
+                document.getElementById("backend-health").textContent = data.backend_healthy ? "✓ Healthy" : "✗ Down";
+                document.getElementById("cache-health").textContent = data.cache_healthy ? "✓ Healthy" : "✗ Down";
+                document.getElementById("frontend-health").textContent = data.frontend_healthy ? "✓ Healthy" : "✗ Down";
+                document.getElementById("current-mode").textContent = data.mode.toUpperCase();
+            } catch (e) {
+                console.error("Status error:", e);
+            }
+        }
+
+        function updateStatusIcon(service, healthy) {
+            const el = document.getElementById(`${service}-status`);
+            if (healthy) {
+                el.classList.add("healthy");
+                el.classList.remove("unhealthy");
+                el.textContent = "✓";
+            } else {
+                el.classList.remove("healthy");
+                el.classList.add("unhealthy");
+                el.textContent = "✗";
+            }
+        }
+
+        function updateModeButtons(mode) {
+            const vulnBtn = document.getElementById("vulnerable-btn");
+            const defBtn = document.getElementById("defended-btn");
+            if (mode === "vulnerable") {
+                vulnBtn.classList.add("active");
+                defBtn.classList.remove("active");
+            } else {
+                vulnBtn.classList.remove("active");
+                defBtn.classList.add("active");
+            }
+        }
+
+        async function switchMode(newMode) {
+            addTerminalLine(`$ Switching to ${newMode} mode...`, "warning");
+            try {
+                const res = await fetch(`${API_BASE}/mode`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ mode: newMode })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    addTerminalLine(`✓ Mode switched to ${newMode}`, "success");
+                    updateStatus();
+                } else {
+                    addTerminalLine(`✗ Failed: ${data.detail}`, "error");
+                }
+            } catch (e) {
+                addTerminalLine(`✗ Error: ${e}`, "error");
+            }
+        }
+
+        async function runScenario(scenario) {
+            addTerminalLine(`$ Running scenario: ${scenario}...`, "warning");
+            const btn = document.getElementById(`${scenario}-btn`);
+            btn.classList.add("running");
+
+            try {
+                const res = await fetch(`${API_BASE}/scenario/run`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ scenario, action: "run" })
+                });
+                const data = await res.json();
+                btn.classList.remove("running");
+
+                if (res.ok) {
+                    addTerminalLine(`✓ Scenario completed`, "success");
+                    if (data.output) {
+                        data.output.split("\n").forEach(line => {
+                            if (line.trim()) addTerminalLine(line, "");
+                        });
+                    }
+                } else {
+                    addTerminalLine(`✗ Error: ${data.detail}`, "error");
+                }
+            } catch (e) {
+                btn.classList.remove("running");
+                addTerminalLine(`✗ Error: ${e}`, "error");
+            }
+        }
+
+        async function purgeCache() {
+            addTerminalLine("$ Purging cache...", "warning");
+            try {
+                const res = await fetch(`${API_BASE}/cache/purge`, { method: "POST" });
+                const data = await res.json();
+                if (res.ok) {
+                    addTerminalLine(`✓ Cache purged`, "success");
+                } else {
+                    addTerminalLine(`✗ Error: ${data.detail}`, "error");
+                }
+            } catch (e) {
+                addTerminalLine(`✗ Error: ${e}`, "error");
+            }
+        }
+
+        async function verifyPoison() {
+            addTerminalLine("$ Verifying cache poison...", "warning");
+            try {
+                const res = await fetch(`${API_BASE}/cache/verify`, { method: "POST" });
+                const data = await res.json();
+                if (res.ok) {
+                    addTerminalLine(`✓ Poison status: ${data.status}`, data.status === "poisoned" ? "danger" : "success");
+                } else {
+                    addTerminalLine(`✗ Error: ${data.detail}`, "error");
+                }
+            } catch (e) {
+                addTerminalLine(`✗ Error: ${e}`, "error");
+            }
+        }
+
+        function addTerminalLine(text, type = "") {
+            const term = document.getElementById("output-terminal");
+            const line = document.createElement("div");
+            line.className = `terminal-line ${type}`;
+            line.textContent = text;
+            term.appendChild(line);
+            term.scrollTop = term.scrollHeight;
+        }
+
+        // Initialize
+        updateStatus();
+        setInterval(updateStatus, 5000);
+    </script>
+</body>
+</html>
