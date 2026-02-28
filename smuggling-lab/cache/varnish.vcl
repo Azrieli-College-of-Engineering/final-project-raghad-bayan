@@ -12,9 +12,6 @@ sub vcl_recv {
         }
         return(synth(403, "Forbidden"));
     }
-    if (req.http.Content-Length && req.http.Transfer-Encoding) {
-        return(synth(400, "Bad Request - Ambiguous framing"));
-    }
     if (req.method != "GET" && req.method != "HEAD") {
         return(pass);
     }
@@ -27,9 +24,6 @@ sub vcl_recv {
 sub vcl_hash {
     hash_data(req.url);
     hash_data(req.http.Host);
-    if (req.http.Cookie) {
-        hash_data(req.http.Cookie);
-    }
     return(lookup);
 }
 
