@@ -26,7 +26,7 @@ This lab aligns with the following PortSwigger Web Security Academy topics:
 - [Exploiting HTTP request smuggling to bypass front-end security controls, CL.TE vulnerability](https://portswigger.net/web-security/request-smuggling/exploiting#bypassing-front-end-security-controls-cl-te-vulnerabilities)
 - [Exploiting HTTP request smuggling to perform web cache poisoning](https://portswigger.net/web-security/request-smuggling/exploiting#web-cache-poisoning)
 
-An **academic report PDF** describing the vulnerability, attack chain, and defenses is included in the repository.
+An academic final project report (Word/PDF) was prepared for submission. If it is not visible in this repository, it was submitted separately (e.g., via the course submission system).
 
 ---
 
@@ -43,6 +43,25 @@ An **academic report PDF** describing the vulnerability, attack chain, and defen
 | Back-end | Flask        | API server, `/api/user`, `/admin`         | Honors TE: chunked; stops at `0\r\n\r\n`; queues leftover bytes |
 
 External access is only to **HAProxy on port 80**; Varnish and Flask communicate on the internal Docker network.
+
+---
+
+## Logical Flow (Normal Request Lifecycle)
+
+The following shows the *intended* request/response flow for a normal user request (no smuggling):
+
+```text
+Client GET /api/user
+  → HAProxy (frontend :80) forwards request to Varnish
+  → Varnish checks cache:
+      - HIT: return cached response (Age > 0 / X-Cache: HIT)
+      - MISS: forward to Flask backend
+  → Flask generates JSON (role: standard) with Cache-Control
+  → Varnish stores response (per VCL rules) and returns it
+  → Client receives JSON + cache headers
+```
+
+In the vulnerable scenario, smuggling manipulates how the back-end interprets request boundaries on a reused connection, which causes an attacker-controlled request to be processed “out of band” and potentially cached under a shared key.
 
 ---
 
@@ -204,6 +223,23 @@ python cache_poison.py
 ```
 
 After purge: BEFORE may show CACHE HIT (POISONED), then PURGE 200, then AFTER shows CACHE MISS (CLEAN). Running `cache_poison.py` after that: STEP 1 CACHE MISS, STEP 2 HTTP 400, STEP 3 and STEP 4 CACHE MISS with `role: standard`.
+
+---
+
+## Demo Evidence (Recommended for Submission)
+
+For strict grading, include screenshots or pasted outputs showing:
+
+- **Vulnerable run**
+  - `python smuggle_clte.py` showing victim receives admin content
+  - `python cache_poison.py` showing STEP 3/4 `role: admin` and CACHE HIT
+- **Defended run**
+  - `python cache_poison.py` showing STEP 2 returns **HTTP 400**
+  - Backend log line: `BLOCKED: Smuggling attempt detected ...`
+- **Recovery**
+  - `python purge_cache.py` showing BEFORE poisoned, PURGE 200, AFTER clean
+
+These can be placed in the report or added to the repository as images under a `screenshots/` folder.
 
 ---
 
