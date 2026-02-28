@@ -61,6 +61,22 @@ sys.exit(0 if data.get('status') == 'ok' else 1)"]
     networks:
       - lab-network
 
+  dashboard:
+    build: ./dashboard
+    container_name: smuggling-dashboard
+    depends_on:
+      - frontend
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./attacker:/attacker
+      - ./defenses:/defenses
+      - ./frontend:/frontend
+      - ./cache:/cache
+      - ./backend:/backend
+    networks:
+      - lab-network
+
 networks:
   lab-network:
     driver: bridge
