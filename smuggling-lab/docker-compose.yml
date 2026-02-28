@@ -8,7 +8,10 @@ services:
     expose:
       - "5000"
     environment:
-      - MODE=${MODE:-secure}
+      - MODE=${MODE:-vulnerable}
+      # Used by app.py in SECURE mode to build password reset links.
+      # In VULNERABLE mode this is ignored — the backend trusts X-Forwarded-Host.
+      - APP_DOMAIN=localhost
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; \
 import json; \
