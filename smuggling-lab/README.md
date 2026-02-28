@@ -50,6 +50,8 @@ External access is via **HAProxy on port 80** (lab traffic) and the **Dashboard 
 
 A web-based **Control Panel** runs at **http://localhost:8080**. Use it to:
 
+![HTTP Request Smuggling Lab — Control Panel](screenshots/dashboard.png)
+
 - **Switch mode:** "Switch to VULNERABLE" or "Switch to DEFENDED" — copies the corresponding configs (backend, Varnish, HAProxy) and restarts the affected containers. Wait ~5 seconds after switching for services to come back up.
 - **Run attacks:** One-click buttons for **Scenario 1: CL.TE Smuggling** and **Scenario 2: Cache Poisoning**.
 - **Recovery:** "Run Purge Cache" and "Run Verify Poison" to clear or check cache state.
