@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HTTP Security Lab — Ultimate Analysis Tool</title>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap');
+
+    :root {
+        --bg: #0d1117;
+        --panel: #161b22;
+        --border: #30363d;
+        --red: #f85149;
+        --green: #3fb950;
+        --blue: #58a6ff;
+        --yellow: #d29922;
+        --orange: #f0883e;
+        --text: #c9d1d9;
+        --dim: #8b949e;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+        background: var(--bg); 
+        color: var(--text); 
+        font-family: 'Rajdhani', sans-serif; 
+        line-height: 1.5;
+        overflow-x: hidden;
+    }
+
+    /* Cyber Grid Background */
+    body::before {
+        content: ''; position: fixed; inset: 0;
+        background-image: linear-gradient(rgba(88, 166, 255, 0.03) 1px, transparent 1px), 
+                          linear-gradient(90deg, rgba(88, 166, 255, 0.03) 1px, transparent 1px);
+        background-size: 40px 40px; z-index: -1;
+    }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+
+    header { text-align: center; margin-bottom: 50px; }
+    header h1 { 
+        font-size: 2.8rem; text-transform: uppercase; letter-spacing: 4px; color: #fff;
+        text-shadow: 0 0 20px rgba(88, 166, 255, 0.3);
+    }
+    header h1 span { color: var(--red); }
+    header p { font-family: 'Share Tech Mono', monospace; color: var(--dim); font-size: 0.9rem; margin-top: 10px; }
+
+    /* Professional Navigation Tabs */
+    .tabs { display: flex; justify-content: center; gap: 10px; margin-bottom: 40px; flex-wrap: wrap; }
+    .tab {
+        padding: 12px 25px; background: var(--panel); border: 1px solid var(--border);
+        color: var(--dim); cursor: pointer; font-weight: 700; text-transform: uppercase;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        clip-path: polygon(10% 0, 100% 0, 90% 100%, 0 100%);
+    }
+    .tab:hover { border-color: var(--blue); color: var(--blue); transform: translateY(-2px); }
+    .tab.active { background: var(--blue); color: #0d1117; border-color: var(--blue); }
+    .tab.red.active { background: var(--red); color: #fff; border-color: var(--red); }
+    .tab.green.active { background: var(--green); color: #fff; border-color: var(--green); }
+
+    /* Content Panels */
+    .panel { display: none; animation: slideUp 0.5s ease-out; }
+    .panel.active { display: block; }
+    @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Architecture Nodes */
+    .arch-grid { 
+        display: flex; align-items: center; justify-content: space-between; 
+        margin: 40px 0; padding: 30px; background: rgba(255,255,255,0.02); 
+        border: 1px solid var(--border); border-radius: 12px;
+    }
+    .node { 
+        padding: 20px; border: 2px solid var(--border); background: var(--panel); 
+        text-align: center; min-width: 160px; border-radius: 8px; transition: 0.3s;
+    }
+    .node:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(88, 166, 255, 0.2); }
+    .node.attacker { border-color: var(--red); }
+    .node.proxy { border-color: var(--orange); }
+    .node.cache { border-color: var(--blue); }
+    .node.backend { border-color: var(--green); }
+    .node h4 { font-size: 1.2rem; margin-bottom: 5px; color: #fff; }
+    .node small { font-family: 'Share Tech Mono', monospace; color: var(--dim); }
+
+    /* Step Cards */
+    .section-title { 
+        font-family: 'Share Tech Mono', monospace; font-size: 1rem; color: var(--blue); 
+        margin: 30px 0 20px; text-transform: uppercase; border-bottom: 1px solid var(--border);
+        padding-bottom: 10px;
+    }
+    .step-card { 
+        background: var(--panel); border: 1px solid var(--border); padding: 25px; 
+        margin-bottom: 20px; border-left: 5px solid var(--dim); position: relative;
+    }
+    .step-card.vulnerable { border-left-color: var(--red); }
+    .step-card.secure { border-left-color: var(--green); }
+    
+    .code-box { 
+        font-family: 'Share Tech Mono', monospace; background: #010409; padding: 20px; 
+        border-radius: 6px; font-size: 0.9rem; color: #79c0ff; margin-top: 15px;
+        border: 1px solid #30363d; overflow-x: auto;
+    }
+    .tag { font-family: 'Share Tech Mono', monospace; font-size: 0.75rem; padding: 3px 10px; border-radius: 4px; margin-right: 10px; }
+    .tag-red { background: rgba(248, 81, 73, 0.1); color: var(--red); border: 1px solid var(--red); }
+    .tag-blue { background: rgba(88, 166, 255, 0.1); color: var(--blue); border: 1px solid var(--blue); }
+
+    /* Limitations Grid */
+    .limit-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+    .limit-item { 
+        background: var(--panel); border: 1px solid var(--border); padding: 20px; 
+        border-top: 3px solid var(--yellow); 
+    }
+    .limit-item h4 { color: var(--yellow); margin-bottom: 10px; font-size: 1.1rem; }
+    .limit-item p { font-size: 0.9rem; color: var(--dim); }
+
+</style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>HTTP Request <span>Smuggling</span> Lab</h1>
+        <p>// Analyzing Protocol Desynchronization & Cache Inconsistencies</p>
+    </header>
+
+    <div class="tabs">
+        <button class="tab active" onclick="showTab('arch')">Architecture</button>
+        <button class="tab red" onclick="showTab('smuggling')">Smuggling Flow</button>
+        <button class="tab red" onclick="showTab('advanced')">Advanced Attacks</button>
+        <button class="tab green" onclick="showTab('defense')">Security Solutions</button>
+        <button class="tab" onclick="showTab('limits')">Project Limitations</button>
+    </div>
+
+    <div id="arch" class="panel active">
+        <div class="section-title">System Topology</div>
+        <div class="arch-grid">
+            <div class="node attacker"><h4>💀 Attacker</h4><small>Python Scripts</small></div>
+            <div class="node proxy"><h4>🔀 HAProxy</h4><small>Reverse Proxy</small></div>
+            <div class="node cache"><h4>💾 Varnish</h4><small>HTTP Cache</small></div>
+            <div class="node backend"><h4>🐍 Flask</h4><small>Backend API</small></div>
+        </div>
+        <div class="step-card">
+            <h3>Component Roles</h3>
+            <p><strong>HAProxy:</strong> Decides how to route requests based on Content-Length (in vulnerable mode).<br>
+            <strong>Varnish:</strong> Caches responses. Vulnerable if it doesn't vary keys by user session.<br>
+            <strong>Flask (Werkzeug):</strong> Processes requests. Vulnerable if it prioritizes Transfer-Encoding over Content-Length.</p>
+        </div>
+    </div>
+
+    <div id="smuggling" class="panel">
+        <div class="section-title">Scenario: CL.TE Desynchronization</div>
+        <div class="step-card vulnerable">
+            <span class="tag tag-red">Step 1: The Payload</span>
+            <h3>Building the Malicious Request</h3>
+            <p>An attacker sends a single POST request with dual framing headers. HAProxy (Front-end) uses CL to define request boundaries, while Flask (Back-end) uses TE.</p>
+            <div class="code-box">
+POST / HTTP/1.1
+Content-Length: 44
+Transfer-Encoding: chunked
+
+1\r\nX\r\n0\r\n\r\n
+<span style="color:var(--orange)">GET /admin HTTP/1.1</span> <span style="color:var(--dim)"># This is smuggled!</span>
+            </div>
+        </div>
+        <div class="step-card vulnerable">
+            <span class="tag tag-red">Step 2: Cache Poisoning</span>
+            <h3>Hijacking the Victim's Cache Entry</h3>
+            <p>When a victim requests <code>/api/user</code>, the backend processes the <strong>smuggled</strong> request instead. Varnish caches the sensitive admin response under the victim's URL.</p>
+            <div class="code-box">
+Varnish Key: /api/user
+Cached Body: <span style="color:var(--red)">{"role": "admin", "secret": "XK9#mP2$"}</span>
+Status: <span style="color:var(--yellow)">CACHE HIT (POISONED)</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="advanced" class="panel">
+        <div class="section-title">Other Vulnerabilities Demonstrated</div>
+        <div class="step-card vulnerable">
+            <h3>Host Header Injection</h3>
+            <p>Exploiting <code>X-Forwarded-Host</code> to hijack absolute URLs (Password Resets). If the backend trusts this header, it generates links pointing to the attacker's server.</p>
+            <div class="code-box">X-Forwarded-Host: <span style="color:var(--red)">evil.attacker.com</span></div>
+        </div>
+        <div class="step-card vulnerable">
+            <h3>Web Cache Deception</h3>
+            <p>Appending <code>/profile.css</code> to an API path. Varnish caches private JSON data thinking it's a public static asset.</p>
+            <div class="code-box">URL: /api/user/profile.css <span style="color:var(--dim)">→ Result: Cached Private Data</span></div>
+        </div>
+    </div>
+
+    <div id="defense" class="panel">
+        <div class="section-title">Defense-in-Depth Strategy</div>
+        <div class="step-card secure">
+            <span class="tag tag-blue">Backend Defense</span>
+            <h3>Strict Header Validation</h3>
+            <p>Reject requests containing <code>Transfer-Encoding</code> or ambiguous framing. Flask <code>app_secure.py</code> now returns 400 Bad Request for any smuggling attempt.</p>
+        </div>
+        <div class="step-card secure">
+            <span class="tag tag-blue">Cache Defense</span>
+            <h3>Key Isolation (Vary: Cookie)</h3>
+            <p>Configuring Varnish to include session cookies in the hash key. This ensures that a poisoned entry for one user cannot be served to another.</p>
+        </div>
+        <div class="step-card secure">
+            <span class="tag tag-blue">Proxy Defense</span>
+            <h3>HAProxy Normalization</h3>
+            <p>Enforcing <code>http-request deny if has_cl has_te</code> to block the attack at the gateway before it reaches Varnish or the Backend.</p>
+        </div>
+    </div>
+
+    <div id="limits" class="panel">
+        <div class="section-title">Project Limitations & Research Scope</div>
+        <div class="limit-grid">
+            <div class="limit-item">
+                <h4>HTTP/1.1 Scope</h4>
+                <p>The lab focuses on HTTP/1.1 framing issues. Modern HTTP/2 uses binary framing which naturally mitigates most Smuggling vectors.</p>
+            </div>
+            <div class="limit-item">
+                <h4>Plaintext Traffic</h4>
+                <p>All communication is over HTTP. While Smuggling works over TLS (HTTPS), the complexity of certificate handling was excluded from this lab.</p>
+            </div>
+            <div class="limit-item">
+                <h4>Network Conditions</h4>
+                <p>Simulated on localhost. Real-world attacks must account for network latency, TCP keep-alive timeouts, and load-balancer connection pooling.</p>
+            </div>
+            <div class="limit-item">
+                <h4>Security Overhead</h4>
+                <p>Implementing strict validation may block legitimate legacy clients. Production environments require a balance between security and compatibility.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function showTab(id) {
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        event.currentTarget.classList.add('active');
+    }
+</script>
+</body>
+</html>

@@ -123,14 +123,20 @@ smuggling-lab/
 ├── backend/
 │   ├── Dockerfile
 │   ├── app.py
+│   ├── flow-diagram.html
 │   └── requirements.txt
 ├── attacker/
 │   ├── smuggle_clte.py
+│   ├── smuggle_tecl.py
 │   ├── cache_poison.py
+│   ├── cache_deception.py
 │   ├── purge_cache.py
+│   ├── demo.py
+│   ├── host_header_injection.py
 │   └── verify_poison.py
 ├── defenses/
 │   ├── haproxy_secure.cfg
+│   ├── haproxy_tecl_secure.cfg
 │   ├── varnish_secure.vcl
 │   └── app_secure.py
 └── README.md
@@ -279,11 +285,13 @@ These can be placed in the report or added to the repository as images under a `
 
 ## Limitations
 
-- The lab uses a fixed, simplified topology (single front-end, cache, and backend) and does not model every real-world deployment.
-- Attack scripts use raw sockets and assume the stack is reachable at `localhost:80`; no authentication or TLS.
-- The “secure” configs are for demonstration; production would need stricter purge authorization, TLS, and additional hardening.
-- HAProxy ACL behavior is specific to the version tested; other proxies may behave differently.
-- Cache purge is protected only by a shared secret header; production should use stronger access control and network restrictions.
+Normalization is Key: Most smuggling attacks are prevented by forcing the proxy to only use one framing method.
+
+Cache Invalidation: Simply patching the code isn't enough; existing poisoned entries must be purged manually.
+
+HTTP/2 Mitigation: While this lab focuses on HTTP/1.1, moving to HTTP/2 largely eliminates desynchronization vulnerabilities.
+
+Environment: This is a lab environment. Production systems should use TLS, WAFs, and stricter network segmentation.
 
 ---
 
